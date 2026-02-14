@@ -20,6 +20,7 @@ from .errors import (
     format_runtime_error,
     format_validation_error,
 )
+from .observability import MetricsCollector, RetryPolicy, StructuredLogger
 from .policies import PolicySpec, resolve_effective_limits
 from .resource_guard import ResourceGuard, ResourceUsageMetrics
 from .snapshots import MontySnapshot
@@ -59,6 +60,8 @@ class MontyContext(Generic[InputT, OutputT]):
         tools: list[Callable[..., Any]] | None = None,
         filesystem: Any | None = None,
         debug: bool = False,
+        logger: StructuredLogger | None = None,
+        metrics: MetricsCollector | None = None,
     ) -> None:
         self.input_model = input_model
         self.output_model = output_model
@@ -68,6 +71,8 @@ class MontyContext(Generic[InputT, OutputT]):
         self.stub_generator = StubGenerator()
         self.debug = debug
         self.resource_metrics = ResourceUsageMetrics()
+        self.logger = logger or StructuredLogger()
+        self.metrics = metrics or MetricsCollector()
         self._debug_payload: DebugPayload = {
             "events": [],
             "stdout": "",
@@ -90,7 +95,8 @@ class MontyContext(Generic[InputT, OutputT]):
             "resource_metrics": {},
         }
         self._event("validate-inputs")
-        validated_inputs = self._validate_inputs(inputs)
+        with self.metrics.timer("validate_inputs"):
+            validated_inputs = self._validate_inputs(inputs)
         serialized_inputs = validated_inputs.model_dump(mode="python")
         type_stubs = self.stub_generator.generate(
             input_model=self.input_model,
@@ -131,13 +137,17 @@ class MontyContext(Generic[InputT, OutputT]):
         err = io.StringIO()
         try:
             self._event("build-runner")
-            runner = Monty(code, **monty_kwargs)
+            with self.metrics.timer("build_runner"):
+                runner = Monty(code, **monty_kwargs)
             self._event("execute")
-            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-                result = await run_monty_async(runner, **run_kwargs)
+            with self.metrics.timer("execute_async"):
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    result = await run_monty_async(runner, **run_kwargs)
             self._capture_resource_metrics(result)
+            self.metrics.increment("executions_success")
             return self._validated_output_with_event(result)
         except Exception as exc:  # noqa: BLE001
+            self.metrics.increment("executions_failed")
             raise self._normalize_monty_exception(exc) from exc
         finally:
             self._debug_payload["stdout"] += out.getvalue()
@@ -154,7 +164,8 @@ class MontyContext(Generic[InputT, OutputT]):
             "resource_metrics": {},
         }
         self._event("validate-inputs")
-        validated_inputs = self._validate_inputs(inputs)
+        with self.metrics.timer("validate_inputs"):
+            validated_inputs = self._validate_inputs(inputs)
         serialized_inputs = validated_inputs.model_dump(mode="python")
         type_stubs = self.stub_generator.generate(
             input_model=self.input_model,
@@ -196,6 +207,7 @@ class MontyContext(Generic[InputT, OutputT]):
             runner = Monty(code, **monty_kwargs)
             return await self._run_start(runner, start_kwargs)
         except Exception as exc:  # noqa: BLE001
+            self.metrics.increment("executions_failed")
             raise self._normalize_monty_exception(exc) from exc
 
     def load_snapshot(self, serialized: bytes, **kwargs: Any) -> MontySnapshot:
@@ -216,6 +228,7 @@ class MontyContext(Generic[InputT, OutputT]):
         try:
             snapshot = NativeMontySnapshot.load(serialized, **load_kwargs)
         except Exception as exc:  # noqa: BLE001
+            self.metrics.increment("executions_failed")
             raise self._normalize_monty_exception(exc) from exc
 
         self._event("restore-snapshot")
@@ -235,6 +248,34 @@ class MontyContext(Generic[InputT, OutputT]):
             "MontyContext.execute() cannot be called from an active event loop; "
             "use MontyContext.execute_async() instead."
         ) from None
+
+    def execute_with_resilience(
+        self,
+        code: str,
+        inputs: InputT | dict[str, Any],
+        *,
+        retry_policy: RetryPolicy | None = None,
+        fallback: Any | None = None,
+    ) -> Any | OutputT:
+        """Execute with retry/fallback behavior for production degradation paths."""
+        policy = retry_policy or RetryPolicy()
+        for attempt in range(1, policy.attempts + 1):
+            try:
+                self.logger.emit("grail.execution.attempt", attempt=attempt)
+                return self.execute(code, inputs)
+            except Exception as exc:  # noqa: BLE001
+                self.logger.emit("grail.execution.failure", attempt=attempt, error=str(exc))
+                if policy.should_retry(exc, attempt=attempt):
+                    if policy.backoff_seconds > 0:
+                        import time
+
+                        time.sleep(policy.backoff_seconds)
+                    continue
+                if fallback is not None:
+                    self.metrics.increment("executions_fallback")
+                    self.logger.emit("grail.execution.fallback", attempt=attempt)
+                    return fallback
+                raise
 
     def _validate_inputs(self, inputs: InputT | dict[str, Any]) -> InputT:
         if isinstance(inputs, self.input_model):
@@ -355,6 +396,7 @@ class MontyContext(Generic[InputT, OutputT]):
         return supported
 
     def _event(self, value: str) -> None:
+        self.logger.emit("grail.lifecycle", step=value)
         if self.debug:
             self._debug_payload["events"].append(value)
 
@@ -373,7 +415,7 @@ class MontyContext(Generic[InputT, OutputT]):
             self.resource_metrics = ResourceUsageMetrics.from_runtime_payload(payload)
         self._debug_payload["resource_metrics"] = self.resource_metrics.model_dump(
             exclude_none=True
-        )
+        ) | {"collector": self.metrics.snapshot()}
 
     def _debug_tools_mapping(self) -> dict[str, Callable[..., Any]]:
         tools = self.tools.as_mapping()

@@ -8,6 +8,7 @@ from .errors import (
     GrailOutputValidationError,
     GrailValidationError,
 )
+from .observability import MetricsCollector, RetryPolicy, StructuredLogger
 from .filesystem import (
     FilePermission,
     GrailFilesystem,
@@ -41,6 +42,9 @@ __all__ = [
     "GrailExecutionError",
     "GrailLimitError",
     "GrailOutputValidationError",
+    "MetricsCollector",
+    "RetryPolicy",
+    "StructuredLogger",
     "GrailValidationError",
     "FilePermission",
     "GrailFilesystem",
