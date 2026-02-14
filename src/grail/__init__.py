@@ -8,6 +8,7 @@ from .errors import (
     GrailOutputValidationError,
     GrailValidationError,
 )
+from .filesystem import FilePermission, GrailFilesystem, callback_filesystem, memory_filesystem
 from .snapshots import (
     MontySnapshot,
     deserialize_snapshot_payload,
@@ -24,6 +25,10 @@ __all__ = [
     "GrailLimitError",
     "GrailOutputValidationError",
     "GrailValidationError",
+    "FilePermission",
+    "GrailFilesystem",
+    "memory_filesystem",
+    "callback_filesystem",
     "MontyContext",
     "ResourceLimits",
     "snapshot_payload_to_base64",

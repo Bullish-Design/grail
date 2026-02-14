@@ -1,0 +1,7 @@
+{
+  "reads": ["hello"],
+  "final_files": {
+    "/workspace/input.txt": "hello",
+    "/workspace/out.txt": "HELLO"
+  }
+}

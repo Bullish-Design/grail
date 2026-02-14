@@ -52,12 +52,14 @@ class MontyContext(Generic[InputT, OutputT]):
         limits: ResourceLimits | None = None,
         output_model: type[OutputT] | None = None,
         tools: list[Callable[..., Any]] | None = None,
+        filesystem: Any | None = None,
         debug: bool = False,
     ) -> None:
         self.input_model = input_model
         self.output_model = output_model
         self.limits = merge_resource_limits(limits)
         self.tools = ToolRegistry(tools)
+        self.filesystem = filesystem
         self.stub_generator = StubGenerator()
         self.debug = debug
         self._debug_payload: DebugPayload = {
@@ -105,6 +107,9 @@ class MontyContext(Generic[InputT, OutputT]):
                 "external_functions": self._debug_tools_mapping(),
                 "functions": self._debug_tools_mapping(),
                 "globals": self._debug_tools_mapping(),
+                "os": self.filesystem,
+                "filesystem": self.filesystem,
+                "os_access": self.filesystem,
             },
             drop_required=("runner", "monty"),
         )
@@ -160,6 +165,9 @@ class MontyContext(Generic[InputT, OutputT]):
                 "functions": self._debug_tools_mapping(),
                 "globals": self._debug_tools_mapping(),
                 "print_callback": self._print_callback,
+                "os": self.filesystem,
+                "filesystem": self.filesystem,
+                "os_access": self.filesystem,
             },
             drop_required=("self",),
         )
@@ -277,6 +285,10 @@ class MontyContext(Generic[InputT, OutputT]):
             if "limit" in str(exc).lower() or "recursion" in str(exc).lower():
                 return GrailLimitError(message)
             return GrailExecutionError(message)
+        if isinstance(exc, PermissionError):
+            return GrailExecutionError(f"Monty filesystem permission denied: {exc}")
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) == 13:
+            return GrailExecutionError(f"Monty filesystem permission denied: {exc}")
         if isinstance(exc, MontyError):
             location = extract_location(exc)
             message = format_runtime_error(

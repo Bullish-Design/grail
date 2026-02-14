@@ -1,0 +1,18 @@
+{
+  "backend": "memory",
+  "root_dir": "/workspace",
+  "files": {
+    "/workspace/input.txt": "ok"
+  },
+  "permissions": {
+    "/workspace": "read"
+  },
+  "default_permission": "deny",
+  "code": "isolation violation sequence",
+  "inputs": {
+    "operations": [
+      {"op": "read_text", "path": "../secret.txt"}
+    ],
+    "inspect_paths": ["/workspace/input.txt"]
+  }
+}

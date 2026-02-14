@@ -1,0 +1,18 @@
+{
+  "backend": "memory",
+  "root_dir": "/workspace",
+  "files": {
+    "/workspace/readonly.txt": "fixed"
+  },
+  "permissions": {
+    "/workspace/readonly.txt": "read"
+  },
+  "default_permission": "deny",
+  "code": "permission denied sequence",
+  "inputs": {
+    "operations": [
+      {"op": "write_text", "path": "/workspace/readonly.txt", "data": "mutate"}
+    ],
+    "inspect_paths": ["/workspace/readonly.txt"]
+  }
+}
