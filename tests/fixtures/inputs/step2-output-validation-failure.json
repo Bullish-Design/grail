@@ -1,5 +1,5 @@
 {
-  "code": "{'total': str(add(inputs['a'], inputs['b']))}",
+  "code": "{'total': 'not-an-int'}",
   "expected_error": "GrailOutputValidationError",
   "inputs": {"a": 4, "b": 5},
   "tool_calls": [
