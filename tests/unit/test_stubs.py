@@ -23,7 +23,8 @@ def test_stub_generator_is_deterministic() -> None:
 
     expected = "\n".join(
         [
-            "from typing import Any, TypedDict",
+            "from typing import TypedDict",
+            "",
             "",
             "class InModel(TypedDict):",
             "    count: int",
