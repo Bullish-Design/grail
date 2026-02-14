@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from pydantic import BaseModel
+
+from tests.helpers.io_contracts import assert_contract, load_expected, load_input
 
 from grail.context import GrailOutputValidationError, MontyContext
 
@@ -86,11 +87,6 @@ class FakeMontyError(Exception):
     pass
 
 
-def _load_fixture(kind: str, name: str) -> dict[str, Any]:
-    path = Path("tests/fixtures") / kind / f"{name}.json"
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 @pytest.fixture
 def fake_monty(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_module = SimpleNamespace(
@@ -106,9 +102,10 @@ def fake_monty(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_pause_resume_contract(fake_monty: None) -> None:
+    del fake_monty
     fixture_name = "step4-pause-resume"
-    payload = _load_fixture("inputs", fixture_name)
-    expected = _load_fixture("expected", fixture_name)
+    payload = load_input(fixture_name)
+    expected = load_expected(fixture_name)
 
     ctx = MontyContext(SnapshotInput, output_model=SnapshotOutput, debug=True)
     snapshot = asyncio.run(ctx.start(payload["code"], payload["inputs"]))
@@ -123,15 +120,16 @@ def test_step4_pause_resume_contract(fake_monty: None) -> None:
         "result": completed.output.model_dump(mode="python"),
     }
 
-    assert actual == expected
+    assert_contract(fixture_name, expected=expected, actual=actual, input_payload=payload)
 
 
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_dump_load_binary_integrity_contract(fake_monty: None) -> None:
+    del fake_monty
     fixture_name = "step4-dump-load"
-    payload = _load_fixture("inputs", fixture_name)
-    expected = _load_fixture("expected", fixture_name)
+    payload = load_input(fixture_name)
+    expected = load_expected(fixture_name)
 
     ctx = MontyContext(SnapshotInput, output_model=SnapshotOutput)
     snapshot = asyncio.run(ctx.start(payload["code"], payload["inputs"]))
@@ -147,15 +145,16 @@ def test_step4_dump_load_binary_integrity_contract(fake_monty: None) -> None:
         },
     }
 
-    assert actual == expected
+    assert_contract(fixture_name, expected=expected, actual=actual, input_payload=payload)
 
 
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_restore_fresh_context_contract(fake_monty: None) -> None:
+    del fake_monty
     fixture_name = "step4-fresh-context"
-    payload = _load_fixture("inputs", fixture_name)
-    expected = _load_fixture("expected", fixture_name)
+    payload = load_input(fixture_name)
+    expected = load_expected(fixture_name)
 
     first = MontyContext(SnapshotInput, output_model=SnapshotOutput, debug=True)
     paused = asyncio.run(first.start(payload["code"], payload["inputs"]))
@@ -171,12 +170,12 @@ def test_step4_restore_fresh_context_contract(fake_monty: None) -> None:
         "result": completed.output.model_dump(mode="python"),
     }
 
-    assert actual == expected
+    assert_contract(fixture_name, expected=expected, actual=actual, input_payload=payload)
 
 
-@pytest.mark.contract
 @pytest.mark.unit
 def test_step4_restored_snapshot_output_validation_parity(fake_monty: None) -> None:
+    del fake_monty
     ctx = MontyContext(SnapshotInput, output_model=SnapshotOutput)
     payload = {
         "function_name": "add",

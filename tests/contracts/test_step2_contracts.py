@@ -58,12 +58,7 @@ def test_step2_tool_success_contracts(
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["code"],
-        },
+        input_payload=payload,
     )
 
 
@@ -84,12 +79,7 @@ def test_step2_tool_exception_contract() -> None:
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["code"],
-        },
+        input_payload=payload,
     )
 
 
@@ -110,12 +100,7 @@ def test_step2_unknown_tool_contract() -> None:
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["code"],
-        },
+        input_payload=payload,
     )
 
 
@@ -136,10 +121,5 @@ def test_step2_output_validation_failure_contract() -> None:
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["code"],
-        },
+        input_payload=payload,
     )

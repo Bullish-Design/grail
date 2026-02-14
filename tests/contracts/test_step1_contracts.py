@@ -48,12 +48,7 @@ def test_step1_success_contracts(fixture_name: str, model: type[BaseModel]) -> N
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["code"],
-        },
+        input_payload=payload,
     )
 
 
@@ -73,10 +68,5 @@ def test_step1_validation_failure_contract() -> None:
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["code"],
-        },
+        input_payload=payload,
     )

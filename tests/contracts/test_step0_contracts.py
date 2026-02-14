@@ -22,10 +22,5 @@ def test_smoke_expression_contract() -> None:
         fixture_name,
         expected=expected,
         actual=actual,
-        context={
-            "test_id": fixture_name,
-            "input_fixture": f"tests/fixtures/inputs/{fixture_name}.json",
-            "input_payload": payload,
-            "code_snippet": payload["expr"],
-        },
+        input_payload=payload,
     )

@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from pathlib import Path
 from typing import NewType
 
 import pytest
 from pydantic import BaseModel
+
+from tests.helpers.io_contracts import assert_contract, load_expected_text, load_input
 
 from grail.stubs import StubGenerator
 
@@ -34,12 +35,19 @@ def transform(
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_stub_contract_dataclass_and_nested_annotations() -> None:
+    fixture_name = "step4-complex-generics"
+    payload = load_input("step4-fresh-context")
+
     actual = StubGenerator().generate(
         input_model=StubInput,
         output_model=StubOutput,
         tools=[transform],
     )
-    expected_path = Path("tests/fixtures/expected/stubs/step4-complex-generics.pyi")
-    expected = expected_path.read_text(encoding="utf-8")
+    expected = load_expected_text(fixture_name, section="stubs")
 
-    assert actual == expected
+    assert_contract(
+        fixture_name,
+        expected=expected,
+        actual=actual,
+        input_payload=payload,
+    )
