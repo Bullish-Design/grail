@@ -19,6 +19,7 @@ from grail.filesystem import (
     FilePermission,
     GrailFilesystem,
     callback_filesystem,
+    hooked_filesystem,
     memory_filesystem,
 )
 
@@ -213,3 +214,35 @@ def test_step4_filesystem_denies_direct_parent_traversal() -> None:
 
     with pytest.raises(PermissionError, match="Path escapes filesystem root: /sandbox/../secret"):
         _ = filesystem._normalize(Path("../secret"))
+
+
+@pytest.mark.unit
+def test_step4_hooked_filesystem_supports_seed_files_and_prefix_hooks() -> None:
+    writes: list[tuple[Path, str | bytes]] = []
+
+    filesystem = hooked_filesystem(
+        files={"/sandbox/seed.txt": "seed"},
+        read_hooks={"/sandbox": lambda path: f"hooked:{path.name}"},
+        write_hooks={"/sandbox": lambda path, data: writes.append((path, data))},
+        permissions={"/sandbox": FilePermission.WRITE},
+        root_dir="/sandbox",
+    )
+
+    assert filesystem.path_read_text(Path("/sandbox/seed.txt")) == "hooked:seed.txt"
+    assert filesystem.path_read_bytes(Path("/sandbox/seed.txt")) == b"hooked:seed.txt"
+
+    written = filesystem.path_write_text(Path("/sandbox/new.txt"), "new-value")
+
+    assert written == len("new-value")
+    assert writes == [(Path("/sandbox/new.txt"), "new-value")]
+
+
+@pytest.mark.unit
+def test_step4_hooked_filesystem_uses_seed_content_without_read_hook() -> None:
+    filesystem = hooked_filesystem(
+        files={"/sandbox/seed.txt": "seed"},
+        permissions={"/sandbox": FilePermission.READ},
+        root_dir="/sandbox",
+    )
+
+    assert filesystem.path_read_text(Path("/sandbox/seed.txt")) == "seed"

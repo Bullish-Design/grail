@@ -33,6 +33,48 @@ def _normalized_paths(mapping: Mapping[str | PurePosixPath, T] | None) -> dict[P
     return {PurePosixPath(path): value for path, value in (mapping or {}).items()}
 
 
+def _permission_mode(
+    path: str | PurePosixPath,
+    permission_map: Mapping[str | PurePosixPath, FilePermission],
+) -> int:
+    permission = permission_map.get(path, FilePermission.READ)
+    return PERMISSION_TO_MODE.get(permission, 0o444)
+
+
+def _build_os_access_from_memory_files(
+    files: Mapping[str | PurePosixPath, str | bytes],
+    *,
+    root_dir: str | PurePosixPath,
+    permission_map: Mapping[str | PurePosixPath, FilePermission] | None = None,
+) -> OSAccess:
+    memory_files = []
+    for path, content in files.items():
+        memory_file_kwargs: dict[str, int] = {}
+        if permission_map is not None:
+            memory_file_kwargs["permissions"] = _permission_mode(path, permission_map)
+        memory_files.append(MemoryFile(path, content, **memory_file_kwargs))
+    return OSAccess(memory_files, root_dir=root_dir)
+
+
+def _build_grail_filesystem(
+    os_access: AbstractOS,
+    *,
+    root_dir: str | PurePosixPath,
+    permissions: Mapping[str | PurePosixPath, FilePermission] | None,
+    default_permission: FilePermission,
+    read_hooks: Mapping[str | PurePosixPath, ReadHook] | None = None,
+    write_hooks: Mapping[str | PurePosixPath, WriteHook] | None = None,
+) -> GrailFilesystem:
+    return GrailFilesystem(
+        os_access,
+        root_dir=root_dir,
+        permissions=permissions,
+        default_permission=default_permission,
+        read_hooks=read_hooks,
+        write_hooks=write_hooks,
+    )
+
+
 class GrailFilesystem(AbstractOS):
     """Guarded OS adapter with explicit path permissions."""
 
@@ -198,19 +240,12 @@ def memory_filesystem(
     permissions: Mapping[str | PurePosixPath, FilePermission] | None = None,
     default_permission: FilePermission = FilePermission.DENY,
 ) -> GrailFilesystem:
-    permission_map = permissions or {}
-    memory_files = [
-        MemoryFile(
-            path,
-            content,
-            permissions=PERMISSION_TO_MODE.get(
-                permission_map.get(path, FilePermission.READ), 0o444
-            ),
-        )
-        for path, content in files.items()
-    ]
-    return GrailFilesystem(
-        OSAccess(memory_files, root_dir=root_dir),
+    return _build_grail_filesystem(
+        _build_os_access_from_memory_files(
+            files,
+            root_dir=root_dir,
+            permission_map=permissions or {},
+        ),
         root_dir=root_dir,
         permissions=permissions,
         default_permission=default_permission,
@@ -227,9 +262,9 @@ def hooked_filesystem(
     default_permission: FilePermission = FilePermission.DENY,
 ) -> GrailFilesystem:
     """Build a filesystem with optional seed files and prefix path hooks."""
-    return GrailFilesystem(
-        OSAccess(
-            [MemoryFile(path, content) for path, content in (files or {}).items()],
+    return _build_grail_filesystem(
+        _build_os_access_from_memory_files(
+            files or {},
             root_dir=root_dir,
         ),
         root_dir=root_dir,
@@ -249,19 +284,16 @@ def callback_filesystem(
     read_hooks: Mapping[str | PurePosixPath, ReadHook] | None = None,
     write_hooks: Mapping[str | PurePosixPath, WriteHook] | None = None,
 ) -> GrailFilesystem:
-    permission_map = permissions or {}
     callback_files = [
         CallbackFile(
             path,
             read=read,
             write=write,
-            permissions=PERMISSION_TO_MODE.get(
-                permission_map.get(path, FilePermission.READ), 0o444
-            ),
+            permissions=_permission_mode(path, permissions or {}),
         )
         for path, (read, write) in files.items()
     ]
-    return GrailFilesystem(
+    return _build_grail_filesystem(
         OSAccess(callback_files, root_dir=root_dir),
         root_dir=root_dir,
         permissions=permissions,
