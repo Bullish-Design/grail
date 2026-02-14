@@ -8,6 +8,13 @@ from .errors import (
     GrailOutputValidationError,
     GrailValidationError,
 )
+from .snapshots import (
+    MontySnapshot,
+    deserialize_snapshot_payload,
+    serialize_snapshot_payload,
+    snapshot_payload_from_base64,
+    snapshot_payload_to_base64,
+)
 from .stubs import StubGenerator
 from .tools import ToolRegistry
 from .types import ResourceLimits, merge_resource_limits
@@ -19,6 +26,11 @@ __all__ = [
     "GrailValidationError",
     "MontyContext",
     "ResourceLimits",
+    "snapshot_payload_to_base64",
+    "snapshot_payload_from_base64",
+    "serialize_snapshot_payload",
+    "deserialize_snapshot_payload",
+    "MontySnapshot",
     "StubGenerator",
     "ToolRegistry",
     "merge_resource_limits",
