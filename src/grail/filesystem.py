@@ -61,6 +61,11 @@ class GrailFilesystem(AbstractOS):
             normalized.relative_to(self._root)
         except ValueError as exc:
             raise PermissionError(f"Path escapes filesystem root: {normalized}") from exc
+        resolved = PurePosixPath(self._os.path_resolve(normalized))
+        try:
+            resolved.relative_to(self._root)
+        except ValueError as exc:
+            raise PermissionError(f"Path escapes filesystem root: {resolved}") from exc
         return normalized
 
     def _permission_for(self, path: PurePosixPath) -> FilePermission:
@@ -90,16 +95,20 @@ class GrailFilesystem(AbstractOS):
         return None
 
     def path_exists(self, path: PurePosixPath) -> bool:
-        return self._os.path_exists(self._normalize(path))
+        normalized = self._normalize(path)
+        return self._os.path_exists(normalized)
 
     def path_is_file(self, path: PurePosixPath) -> bool:
-        return self._os.path_is_file(self._normalize(path))
+        normalized = self._normalize(path)
+        return self._os.path_is_file(normalized)
 
     def path_is_dir(self, path: PurePosixPath) -> bool:
-        return self._os.path_is_dir(self._normalize(path))
+        normalized = self._normalize(path)
+        return self._os.path_is_dir(normalized)
 
     def path_is_symlink(self, path: PurePosixPath) -> bool:
-        return self._os.path_is_symlink(self._normalize(path))
+        normalized = self._normalize(path)
+        return self._os.path_is_symlink(normalized)
 
     def path_read_text(self, path: PurePosixPath) -> str:
         normalized = self._normalize(path)
@@ -138,29 +147,36 @@ class GrailFilesystem(AbstractOS):
         return self._os.path_write_bytes(normalized, data)
 
     def path_mkdir(self, path: PurePosixPath, parents: bool, exist_ok: bool) -> None:
-        self._assert_write_allowed(self._normalize(path))
-        return self._os.path_mkdir(self._normalize(path), parents=parents, exist_ok=exist_ok)
+        normalized = self._normalize(path)
+        self._assert_write_allowed(normalized)
+        return self._os.path_mkdir(normalized, parents=parents, exist_ok=exist_ok)
 
     def path_unlink(self, path: PurePosixPath) -> None:
-        self._assert_write_allowed(self._normalize(path))
-        return self._os.path_unlink(self._normalize(path))
+        normalized = self._normalize(path)
+        self._assert_write_allowed(normalized)
+        return self._os.path_unlink(normalized)
 
     def path_rmdir(self, path: PurePosixPath) -> None:
-        self._assert_write_allowed(self._normalize(path))
-        return self._os.path_rmdir(self._normalize(path))
+        normalized = self._normalize(path)
+        self._assert_write_allowed(normalized)
+        return self._os.path_rmdir(normalized)
 
     def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
-        self._assert_read_allowed(self._normalize(path))
-        return self._os.path_iterdir(self._normalize(path))
+        normalized = self._normalize(path)
+        self._assert_read_allowed(normalized)
+        return self._os.path_iterdir(normalized)
 
     def path_stat(self, path: PurePosixPath) -> Any:
-        self._assert_read_allowed(self._normalize(path))
-        return self._os.path_stat(self._normalize(path))
+        normalized = self._normalize(path)
+        self._assert_read_allowed(normalized)
+        return self._os.path_stat(normalized)
 
     def path_rename(self, path: PurePosixPath, target: PurePosixPath) -> None:
-        self._assert_write_allowed(self._normalize(path))
-        self._assert_write_allowed(self._normalize(target))
-        return self._os.path_rename(self._normalize(path), self._normalize(target))
+        normalized_path = self._normalize(path)
+        normalized_target = self._normalize(target)
+        self._assert_write_allowed(normalized_path)
+        self._assert_write_allowed(normalized_target)
+        return self._os.path_rename(normalized_path, normalized_target)
 
     def path_resolve(self, path: PurePosixPath) -> str:
         return self._os.path_resolve(self._normalize(path))
