@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import inspect
 from collections.abc import Callable
 from collections.abc import Sequence
@@ -145,7 +146,8 @@ class StubGenerator:
         if self._new_types:
             import_names.append("NewType")
 
-        lines = [f"from typing import {', '.join(import_names)}", ""]
+        output = io.StringIO()
+        output.write(f"from typing import {', '.join(import_names)}")
 
         custom_blocks = self._render_custom_definitions(
             skip_model_names={
@@ -153,17 +155,22 @@ class StubGenerator:
                 output_model.__name__ if output_model is not None else "",
             }
         )
+        output.write("\n\n\n")
         if custom_blocks:
-            lines.extend(["", "\n\n".join(custom_blocks)])
+            output.write("\n\n".join(custom_blocks))
+            output.write("\n\n")
 
-        lines.extend(["", self._model_stub(input_model)])
+        output.write(self._model_stub(input_model))
+
         if output_model is not None:
-            lines.extend(["", self._model_stub(output_model)])
+            output.write("\n\n")
+            output.write(self._model_stub(output_model))
 
         for tool in sorted(tools, key=lambda item: item.__name__):
-            lines.extend(["", self._tool_stub(tool)])
+            output.write("\n\n")
+            output.write(self._tool_stub(tool))
 
-        return "\n".join(lines).strip() + "\n"
+        return output.getvalue().strip() + "\n"
 
     def _reset(self) -> None:
         self._uses_any = False
