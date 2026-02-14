@@ -1,4 +1,5 @@
-from typing import Any, TypedDict
+from typing import TypedDict
+
 
 class StubInput(TypedDict):
     value: int
