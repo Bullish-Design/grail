@@ -106,26 +106,32 @@ class MontyContext(Generic[InputT, OutputT]):
 
         from pydantic_monty import Monty, run_monty_async
 
+        tools_mapping = self._debug_tools_mapping()
         monty_kwargs = self._supported_kwargs(
             Monty,
             {
                 "inputs": ["inputs"],
+                "tools": tools_mapping,
+                "external_functions": tools_mapping,
+                "functions": tools_mapping,
+                "globals": tools_mapping,
                 "type_definitions": type_stubs,
                 "type_check_stubs": type_stubs,
                 "stubs": type_stubs,
             },
             drop_required=("code",),
         )
+        self._coerce_external_functions(monty_kwargs)
 
         run_kwargs = self._supported_kwargs(
             run_monty_async,
             {
                 "inputs": {"inputs": serialized_inputs},
                 "limits": self.limits,
-                "tools": self._debug_tools_mapping(),
-                "external_functions": self._debug_tools_mapping(),
-                "functions": self._debug_tools_mapping(),
-                "globals": self._debug_tools_mapping(),
+                "tools": tools_mapping,
+                "external_functions": tools_mapping,
+                "functions": tools_mapping,
+                "globals": tools_mapping,
                 "os": self.filesystem,
                 "filesystem": self.filesystem,
                 "os_access": self.filesystem,
@@ -175,26 +181,32 @@ class MontyContext(Generic[InputT, OutputT]):
 
         from pydantic_monty import Monty
 
+        tools_mapping = self._debug_tools_mapping()
         monty_kwargs = self._supported_kwargs(
             Monty,
             {
                 "inputs": ["inputs"],
+                "tools": tools_mapping,
+                "external_functions": tools_mapping,
+                "functions": tools_mapping,
+                "globals": tools_mapping,
                 "type_definitions": type_stubs,
                 "type_check_stubs": type_stubs,
                 "stubs": type_stubs,
             },
             drop_required=("code",),
         )
+        self._coerce_external_functions(monty_kwargs)
 
         start_kwargs = self._supported_kwargs(
             Monty.start,
             {
                 "inputs": {"inputs": serialized_inputs},
                 "limits": self.limits,
-                "tools": self._debug_tools_mapping(),
-                "external_functions": self._debug_tools_mapping(),
-                "functions": self._debug_tools_mapping(),
-                "globals": self._debug_tools_mapping(),
+                "tools": tools_mapping,
+                "external_functions": tools_mapping,
+                "functions": tools_mapping,
+                "globals": tools_mapping,
                 "print_callback": self._print_callback,
                 "os": self.filesystem,
                 "filesystem": self.filesystem,
@@ -372,6 +384,11 @@ class MontyContext(Generic[InputT, OutputT]):
             self._debug_payload["stdout"] += text
         elif stream == "stderr":
             self._debug_payload["stderr"] += text
+
+    def _coerce_external_functions(self, kwargs: dict[str, Any]) -> None:
+        value = kwargs.get("external_functions")
+        if isinstance(value, dict):
+            kwargs["external_functions"] = list(value.keys())
 
     def _supported_kwargs(
         self,
