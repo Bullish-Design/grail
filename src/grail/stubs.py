@@ -17,6 +17,7 @@ class StubGenerator:
 
     def __init__(self) -> None:
         self._uses_any = False
+        self._uses_callable = False
         self._new_types: dict[str, Any] = {}
         self._type_aliases: dict[str, Any] = {}
         self._base_models: dict[str, type[BaseModel]] = {}
@@ -40,6 +41,8 @@ class StubGenerator:
         import_names = ["TypedDict"]
         if self._uses_any:
             import_names.insert(0, "Any")
+        if self._uses_callable:
+            import_names.append("Callable")
         if self._new_types:
             import_names.append("NewType")
 
@@ -65,6 +68,7 @@ class StubGenerator:
 
     def _reset(self) -> None:
         self._uses_any = False
+        self._uses_callable = False
         self._new_types = {}
         self._type_aliases = {}
         self._base_models = {}
@@ -74,34 +78,70 @@ class StubGenerator:
         rendered: list[str] = []
         emitted: set[str] = set()
 
-        for name in sorted(self._new_types):
+        def emit_for_annotation(annotation: Any) -> None:
+            if annotation is inspect.Signature.empty:
+                return
+            if self._is_new_type(annotation):
+                emit_named(annotation.__name__)
+                return
+            if self._is_type_alias(annotation):
+                emit_named(annotation.__name__)
+                return
+            if self._is_plain_class(annotation) and issubclass(annotation, BaseModel):
+                emit_named(annotation.__name__)
+                return
+            if self._is_plain_class(annotation) and dataclasses.is_dataclass(annotation):
+                emit_named(annotation.__name__)
+                return
+
+            origin = get_origin(annotation)
+            if origin is None:
+                return
+            for arg in get_args(annotation):
+                if arg is Ellipsis:
+                    continue
+                emit_for_annotation(arg)
+
+        def emit_named(name: str) -> None:
             if name in emitted:
-                continue
-            new_type = self._new_types[name]
-            self._collect_annotation(new_type.__supertype__)
-            supertype = self._annotation_to_stub(new_type.__supertype__)
-            rendered.append(f'{name} = NewType("{name}", {supertype})')
-            emitted.add(name)
+                return
+            if name in self._new_types:
+                new_type = self._new_types[name]
+                emit_for_annotation(new_type.__supertype__)
+                supertype = self._annotation_to_stub(new_type.__supertype__)
+                rendered.append(f'{name} = NewType("{name}", {supertype})')
+                emitted.add(name)
+                return
+            if name in self._type_aliases:
+                alias = self._type_aliases[name]
+                emit_for_annotation(alias.__value__)
+                rendered.append(f"{name} = {self._annotation_to_stub(alias.__value__)}")
+                emitted.add(name)
+                return
+            if name in self._base_models:
+                if name in skip_model_names:
+                    return
+                model = self._base_models[name]
+                for field in model.model_fields.values():
+                    emit_for_annotation(field.annotation)
+                rendered.append(self._model_stub(model))
+                emitted.add(name)
+                return
+            if name in self._dataclasses:
+                model = self._dataclasses[name]
+                for field in dataclasses.fields(model):
+                    emit_for_annotation(field.type)
+                rendered.append(self._dataclass_stub(model))
+                emitted.add(name)
 
-        for alias_name in sorted(self._type_aliases):
-            if alias_name in emitted:
-                continue
-            alias = self._type_aliases[alias_name]
-            self._collect_annotation(alias.__value__)
-            rendered.append(f"{alias_name} = {self._annotation_to_stub(alias.__value__)}")
-            emitted.add(alias_name)
-
-        for model_name in sorted(self._base_models):
-            if model_name in skip_model_names or model_name in emitted:
-                continue
-            rendered.append(self._model_stub(self._base_models[model_name]))
-            emitted.add(model_name)
-
-        for dataclass_name in sorted(self._dataclasses):
-            if dataclass_name in emitted:
-                continue
-            rendered.append(self._dataclass_stub(self._dataclasses[dataclass_name]))
-            emitted.add(dataclass_name)
+        candidates = (
+            set(self._new_types)
+            | set(self._type_aliases)
+            | set(self._base_models)
+            | set(self._dataclasses)
+        )
+        for candidate in sorted(candidates):
+            emit_named(candidate)
 
         return rendered
 
@@ -240,6 +280,7 @@ class StubGenerator:
                 return f"tuple[{self._annotation_to_stub(tuple_args[0])}, ...]"
             return f"tuple[{', '.join(args)}]" if args else "tuple[Any, ...]"
         if origin in {Callable, TypingCallable}:
+            self._uses_callable = True
             call_args = get_args(annotation)
             if len(call_args) != 2:
                 self._uses_any = True
@@ -260,13 +301,17 @@ class StubGenerator:
 
     def _render_union(self, union_args: tuple[Any, ...]) -> str:
         rendered = [self._annotation_to_stub(item) for item in union_args]
-        non_none = sorted({item for item in rendered if item != "None"})
         has_none = "None" in rendered
+        non_none: list[str] = []
+        seen: set[str] = set()
+        for item in sorted(candidate for candidate in rendered if candidate != "None"):
+            if item in seen:
+                continue
+            seen.add(item)
+            non_none.append(item)
 
-        if has_none and len(non_none) == 1:
-            return f"{non_none[0]} | None"
         if has_none:
-            return " | ".join([*non_none, "None"])
+            return " | ".join([*non_none, "None"]) if non_none else "None"
         return " | ".join(non_none)
 
     def _is_new_type(self, annotation: Any) -> bool:

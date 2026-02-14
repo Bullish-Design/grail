@@ -3,13 +3,14 @@ from typing import NewType
 
 import pytest
 from pydantic import BaseModel
-
 from tests.helpers.io_contracts import assert_contract, load_expected_text, load_input
+from typing_extensions import TypeAliasType
 
 from grail.stubs import StubGenerator
 
 UserId = NewType("UserId", int)
-AliasPayload = dict[str, list[tuple[UserId, str | None]]]
+AliasPayload = TypeAliasType("AliasPayload", dict[str, list[tuple[UserId, str | None]]])
+ContractPayload = TypeAliasType("ContractPayload", AliasPayload | list[AliasPayload])
 
 
 @dataclass
@@ -18,17 +19,23 @@ class ContractProfile:
     aliases: tuple[str, ...]
 
 
-class StubInput(BaseModel):
+@dataclass
+class ContractEnvelope:
     profile: ContractProfile
+    payload: ContractPayload
+
+
+class StubInput(BaseModel):
+    payload: ContractPayload
 
 
 class StubOutput(BaseModel):
-    summary: ContractProfile | None
+    summary: ContractEnvelope | None
 
 
 def transform(
-    payload: AliasPayload | list[AliasPayload],
-) -> tuple[ContractProfile | None, AliasPayload]:
+    payload: ContractPayload,
+) -> tuple[ContractEnvelope | None, ContractPayload]:
     return None, {}
 
 

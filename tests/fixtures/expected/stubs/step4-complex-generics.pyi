@@ -3,14 +3,22 @@ from typing import TypedDict, NewType
 
 UserId = NewType("UserId", int)
 
+AliasPayload = dict[str, list[tuple[UserId, str | None]]]
+
 class ContractProfile:
     user_id: UserId
     aliases: tuple[str, ...]
 
-class StubInput(TypedDict):
+ContractPayload = AliasPayload | list[AliasPayload]
+
+class ContractEnvelope:
     profile: ContractProfile
+    payload: ContractPayload
+
+class StubInput(TypedDict):
+    payload: ContractPayload
 
 class StubOutput(TypedDict):
-    summary: ContractProfile | None
+    summary: ContractEnvelope | None
 
-def transform(payload: dict[str, list[tuple[UserId, str | None]]] | list[dict[str, list[tuple[UserId, str | None]]]]) -> tuple[ContractProfile | None, dict[str, list[tuple[UserId, str | None]]]]: ...
+def transform(payload: ContractPayload) -> tuple[ContractEnvelope | None, ContractPayload]: ...
