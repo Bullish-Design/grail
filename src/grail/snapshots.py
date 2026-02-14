@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from collections.abc import Callable
 from typing import Any
 
@@ -40,10 +41,15 @@ class MontySnapshot:
         return dict(value)
 
     @property
-    def output(self) -> Any:
+    def final_value(self) -> Any:
         if not self.is_complete:
             raise RuntimeError("Snapshot is paused and has no final output yet")
         return self._validate_output(getattr(self._state, "output"))
+
+    @property
+    def output(self) -> Any:
+        """Backward-compatible alias for :attr:`final_value`."""
+        return self.final_value
 
     @property
     def is_complete(self) -> bool:
@@ -55,12 +61,12 @@ class MontySnapshot:
             raise RuntimeError("Cannot dump a completed snapshot")
         return getattr(self._state, "dump")()
 
-    def resume(self, **kwargs: Any) -> MontySnapshot:
+    def resume(self, *args: Any, **kwargs: Any) -> MontySnapshot:
         """Resume paused execution and return the next snapshot/final state."""
         if self.is_complete:
             raise RuntimeError("Cannot resume a completed snapshot")
         try:
-            next_state = getattr(self._state, "resume")(**kwargs)
+            next_state = getattr(self._state, "resume")(*args, **kwargs)
         except Exception as exc:  # noqa: BLE001
             raise self._normalize_exception(exc) from exc
         return MontySnapshot(
@@ -87,4 +93,8 @@ def snapshot_payload_to_base64(payload: bytes) -> str:
 
 def snapshot_payload_from_base64(payload: str) -> bytes:
     """Decode URL-safe base64 text back into serialized snapshot bytes."""
-    return base64.urlsafe_b64decode(payload.encode("ascii"))
+    padded = payload + ("=" * (-len(payload) % 4))
+    try:
+        return base64.b64decode(padded.encode("ascii"), altchars=b"-_", validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ValueError("Invalid base64 snapshot payload") from exc
