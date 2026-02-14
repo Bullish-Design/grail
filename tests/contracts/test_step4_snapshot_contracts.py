@@ -197,3 +197,43 @@ def test_step4_restored_snapshot_output_validation_parity(fake_monty: None) -> N
 
     with pytest.raises(GrailOutputValidationError):
         _ = restored.resume(return_value=3).output
+
+
+@pytest.mark.unit
+def test_step4_start_and_resume_resolves_registered_tools_by_symbol_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class ToolAwareMonty:
+        def __init__(self, code: str, **kwargs: Any) -> None:
+            del code
+            self._tools = kwargs.get("tools") or kwargs.get("functions") or kwargs.get("globals")
+
+        def start(self, *, inputs: dict[str, Any], **_: Any) -> FakeMontySnapshot:
+            if not isinstance(self._tools, dict):
+                raise AssertionError("Expected constructor-injected tools mapping")
+            add_fn = self._tools["add"]
+            values = inputs["inputs"]
+            return FakeMontySnapshot(
+                function_name="add",
+                args=(int(values["a"]), int(values["b"])),
+                kwargs={},
+                final_output={"total": add_fn(int(values["a"]), int(values["b"]))},
+            )
+
+    fake_module = SimpleNamespace(
+        Monty=ToolAwareMonty,
+        MontySnapshot=FakeMontySnapshot,
+        MontyError=FakeMontyError,
+        MontyRuntimeError=FakeMontyError,
+        run_monty_async=None,
+    )
+    monkeypatch.setitem(sys.modules, "pydantic_monty", fake_module)
+
+    def add(a: int, b: int) -> int:
+        return a + b
+
+    ctx = MontyContext(SnapshotInput, output_model=SnapshotOutput, tools=[add])
+    snapshot = asyncio.run(ctx.start("{'total': add(inputs['a'], inputs['b'])}", {"a": 4, "b": 5}))
+
+    assert snapshot.function_name == "add"
+    assert snapshot.resume(return_value=9).output.total == 9

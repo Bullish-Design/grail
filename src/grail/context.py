@@ -203,10 +203,6 @@ class MontyContext(Generic[InputT, OutputT]):
             {
                 "inputs": {"inputs": serialized_inputs},
                 "limits": self.limits,
-                "tools": tools_mapping,
-                "external_functions": tools_mapping,
-                "functions": tools_mapping,
-                "globals": tools_mapping,
                 "print_callback": self._print_callback,
                 "os": self.filesystem,
                 "filesystem": self.filesystem,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import pytest
 from pydantic import BaseModel
 
@@ -67,6 +68,28 @@ def test_step2_tool_success_contracts(
         actual=actual,
         input_payload=payload,
     )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("fixture_name", "tools"),
+    [
+        ("step2-sync-tool", [add]),
+        ("step2-async-tool", [mul]),
+    ],
+)
+def test_step2_start_exposes_registered_tool_symbol(
+    fixture_name: str,
+    tools: list,
+) -> None:
+    payload = load_input(fixture_name)
+    ctx = MontyContext(ToolInput, output_model=ToolOutput, tools=tools)
+
+    snapshot = asyncio.run(ctx.start(payload["code"], payload["inputs"]))
+
+    assert snapshot.function_name == payload["tool_calls"][0]["name"]
+    assert list(snapshot.args or ()) == payload["tool_calls"][0]["args"]
+
 
 
 @pytest.mark.contract
