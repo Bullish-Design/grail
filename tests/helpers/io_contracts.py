@@ -27,6 +27,55 @@ def load_expected_text(name: str, *, section: str, suffix: str = ".pyi") -> str:
     return path.read_text(encoding="utf-8")
 
 
+def resolve_contract_payload(
+    *,
+    output: Any | None = None,
+    error: Any | None = None,
+    **extra: Any,
+) -> Any:
+    """Normalize success/error payloads so contract assertions follow one path."""
+    payload: dict[str, Any] = {}
+
+    if output is not None:
+        if isinstance(output, dict):
+            payload.update(output)
+        elif not extra and error is None:
+            return output
+        else:
+            payload["output"] = output
+
+    if error is not None:
+        if isinstance(error, dict):
+            payload.update(error)
+        elif not extra and output is None:
+            return error
+        else:
+            payload["error"] = error
+
+    payload.update(extra)
+    return payload
+
+
+def log_contract_payload(
+    fixture_id: str,
+    *,
+    input_payload: dict[str, Any],
+    resolved_payload: Any,
+) -> None:
+    """Emit standardized fixture, input, and output/error payload logging for contract tests."""
+    print(
+        json.dumps(
+            {
+                "fixture_id": fixture_id,
+                "resolved_input_payload": input_payload,
+                "resolved_output_or_error_payload": resolved_payload,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+
+
 def assert_contract(
     fixture_id: str,
     *,
@@ -34,17 +83,7 @@ def assert_contract(
     actual: Any,
     input_payload: dict[str, Any],
 ) -> None:
-    print(
-        json.dumps(
-            {
-                "fixture_id": fixture_id,
-                "input_payload": input_payload,
-                "resolved_payload": actual,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    log_contract_payload(fixture_id, input_payload=input_payload, resolved_payload=actual)
 
     if expected == actual:
         return

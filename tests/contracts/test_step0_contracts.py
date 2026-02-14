@@ -3,7 +3,12 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected,
+    load_input,
+    resolve_contract_payload,
+)
 
 
 @pytest.mark.contract
@@ -16,7 +21,7 @@ def test_smoke_expression_contract() -> None:
     expected = load_expected(fixture_name)
 
     runner = monty.Monty(payload["expr"])
-    actual = {"result": asyncio.run(monty.run_monty_async(runner))}
+    actual = resolve_contract_payload(output={"result": asyncio.run(monty.run_monty_async(runner))})
 
     assert_contract(
         fixture_name,

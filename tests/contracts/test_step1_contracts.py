@@ -5,7 +5,12 @@ from pydantic import BaseModel
 
 pytest.importorskip("pydantic_monty")
 
-from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected,
+    load_input,
+    resolve_contract_payload,
+)
 
 from grail.context import GrailValidationError, MontyContext
 
@@ -42,7 +47,9 @@ def test_step1_success_contracts(fixture_name: str, model: type[BaseModel]) -> N
     expected = load_expected(fixture_name)
     ctx = MontyContext(model)
 
-    actual = {"result": ctx.execute(payload["code"], payload["inputs"])}
+    actual = resolve_contract_payload(
+        output={"result": ctx.execute(payload["code"], payload["inputs"])}
+    )
 
     assert_contract(
         fixture_name,
@@ -63,7 +70,7 @@ def test_step1_validation_failure_contract() -> None:
     with pytest.raises(GrailValidationError) as exc_info:
         ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {"error_type": type(exc_info.value).__name__}
+    actual = resolve_contract_payload(error={"error_type": type(exc_info.value).__name__})
     assert_contract(
         fixture_name,
         expected=expected,

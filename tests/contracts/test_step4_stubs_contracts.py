@@ -3,7 +3,12 @@ from typing import NewType
 
 import pytest
 from pydantic import BaseModel
-from tests.helpers.io_contracts import assert_contract, load_expected_text, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected_text,
+    load_input,
+    resolve_contract_payload,
+)
 from typing_extensions import TypeAliasType
 
 from grail.stubs import StubGenerator
@@ -45,10 +50,12 @@ def test_step4_stub_contract_dataclass_and_nested_annotations() -> None:
     fixture_name = "step4-complex-generics"
     payload = load_input("step4-fresh-context")
 
-    actual = StubGenerator().generate(
-        input_model=StubInput,
-        output_model=StubOutput,
-        tools=[transform],
+    actual = resolve_contract_payload(
+        output=StubGenerator().generate(
+            input_model=StubInput,
+            output_model=StubOutput,
+            tools=[transform],
+        )
     )
     expected = load_expected_text(fixture_name, section="stubs")
 

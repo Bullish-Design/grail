@@ -6,11 +6,16 @@ from pathlib import Path
 import pytest
 
 _REQUIRED_ASSERT_HELPER = "assert_contract"
+_REQUIRED_PAYLOAD_HELPER = "resolve_contract_payload"
 _REQUIRED_INPUT_HELPERS = {"load_input"}
 _REQUIRED_EXPECTED_HELPERS = {"load_expected", "load_expected_text"}
 
 
-def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config, items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    session: pytest.Session,
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
     del session, config
     parsed_files: dict[Path, ast.Module] = {}
     violations: list[str] = []
@@ -30,7 +35,8 @@ def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config
         if test_fn is None:
             violations.append(
                 f"{path}::{item.name} - unable to inspect function body; ensure it calls "
-                "fixture helpers and assert_contract."
+                "load_input/load_expected (or load_expected_text), "
+                "resolve_contract_payload, and assert_contract."
             )
             continue
 
@@ -39,7 +45,9 @@ def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config
         if missing:
             violations.append(
                 f"{path}::{test_name} - missing required helper calls: {', '.join(missing)}. "
-                "Contract tests must load fixtures via load_input/load_expected (or load_expected_text) "
+                "Contract tests must load fixtures via "
+                "load_input/load_expected (or load_expected_text), "
+                "build result payloads via resolve_contract_payload, "
                 "and compare via assert_contract."
             )
 
@@ -47,7 +55,10 @@ def pytest_collection_modifyitems(session: pytest.Session, config: pytest.Config
         raise pytest.UsageError("Contract format validation failed:\n- " + "\n- ".join(violations))
 
 
-def _find_test_function(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+def _find_test_function(
+    tree: ast.Module,
+    name: str,
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     for node in tree.body:
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
             return node
@@ -70,6 +81,8 @@ def _missing_helpers(calls: set[str]) -> list[str]:
     missing: list[str] = []
     if _REQUIRED_ASSERT_HELPER not in calls:
         missing.append(_REQUIRED_ASSERT_HELPER)
+    if _REQUIRED_PAYLOAD_HELPER not in calls:
+        missing.append(_REQUIRED_PAYLOAD_HELPER)
     if not (_REQUIRED_INPUT_HELPERS & calls):
         missing.append("load_input")
     if not (_REQUIRED_EXPECTED_HELPERS & calls):
