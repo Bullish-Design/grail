@@ -1,11 +1,12 @@
 """Grail: a Pydantic-native wrapper around Monty for secure code execution."""
 
-from .context import (
+from .context import MontyContext
+from .decorators import secure
+from .errors import (
     GrailExecutionError,
     GrailLimitError,
     GrailOutputValidationError,
     GrailValidationError,
-    MontyContext,
 )
 from .stubs import StubGenerator
 from .tools import ToolRegistry
@@ -21,6 +22,7 @@ __all__ = [
     "StubGenerator",
     "ToolRegistry",
     "merge_resource_limits",
+    "secure",
 ]
 
 __version__ = "0.0.0"
