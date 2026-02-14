@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 from collections.abc import Callable
+from collections.abc import Sequence
 from types import GenericAlias, NoneType, UnionType
 from typing import Any, Union, get_args, get_origin
 from typing import Callable as TypingCallable
@@ -12,8 +13,86 @@ from typing import Callable as TypingCallable
 from pydantic import BaseModel
 
 
+ToolFingerprint = tuple[str, str]
+CacheKey = tuple[str, str | None, tuple[ToolFingerprint, ...]]
+
+
+def _model_identity(model: type[BaseModel] | None) -> str | None:
+    if model is None:
+        return None
+    return f"{model.__module__}.{model.__qualname__}"
+
+
+def _stable_annotation_repr(annotation: Any) -> str:
+    if annotation is inspect.Signature.empty:
+        return "<empty>"
+    if annotation is NoneType or annotation is type(None):
+        return "None"
+    if annotation is Any:
+        return "Any"
+
+    origin = get_origin(annotation)
+    if origin is not None:
+        origin_text = _stable_annotation_repr(origin)
+        args = ", ".join(_stable_annotation_repr(arg) for arg in get_args(annotation))
+        return f"{origin_text}[{args}]"
+
+    if isinstance(annotation, type):
+        return f"{annotation.__module__}.{annotation.__qualname__}"
+
+    if hasattr(annotation, "__module__") and hasattr(annotation, "__qualname__"):
+        return f"{annotation.__module__}.{annotation.__qualname__}"
+
+    if hasattr(annotation, "__name__"):
+        return str(annotation.__name__)
+
+    return repr(annotation)
+
+
+def _tool_fingerprint(tool: Callable[..., Any]) -> ToolFingerprint:
+    signature = inspect.signature(tool)
+    parameters: list[str] = []
+    for param in signature.parameters.values():
+        default_text = (
+            "<empty>" if param.default is inspect.Signature.empty else repr(param.default)
+        )
+        parameters.append(
+            "|".join(
+                [
+                    param.name,
+                    str(param.kind),
+                    _stable_annotation_repr(param.annotation),
+                    default_text,
+                ]
+            )
+        )
+
+    signature_text = "|".join(
+        [
+            ",".join(parameters),
+            _stable_annotation_repr(signature.return_annotation),
+        ]
+    )
+    return (tool.__name__, signature_text)
+
+
+def _cache_key(
+    *,
+    input_model: type[BaseModel],
+    output_model: type[BaseModel] | None,
+    tools: Sequence[Callable[..., Any]],
+) -> CacheKey:
+    return (
+        _model_identity(input_model) or "",
+        _model_identity(output_model),
+        tuple(_tool_fingerprint(tool) for tool in tools),
+    )
+
+
 class StubGenerator:
     """Generate minimal deterministic type stubs for models and tools."""
+
+    _cache: dict[CacheKey, str] = {}
 
     def __init__(self) -> None:
         self._uses_any = False
@@ -24,6 +103,26 @@ class StubGenerator:
         self._dataclasses: dict[str, type[Any]] = {}
 
     def generate(
+        self,
+        *,
+        input_model: type[BaseModel],
+        output_model: type[BaseModel] | None,
+        tools: list[Callable[..., Any]],
+    ) -> str:
+        key = _cache_key(input_model=input_model, output_model=output_model, tools=tools)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
+        rendered = self._generate_uncached(
+            input_model=input_model,
+            output_model=output_model,
+            tools=tools,
+        )
+        self._cache[key] = rendered
+        return rendered
+
+    def _generate_uncached(
         self,
         *,
         input_model: type[BaseModel],
