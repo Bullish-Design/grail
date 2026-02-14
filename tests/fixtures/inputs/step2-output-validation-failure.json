@@ -1,0 +1,8 @@
+{
+  "code": "{'total': str(add(inputs['a'], inputs['b']))}",
+  "expected_error": "GrailOutputValidationError",
+  "inputs": {"a": 4, "b": 5},
+  "tool_calls": [
+    {"args": [4, 5], "kwargs": {}, "name": "add"}
+  ]
+}

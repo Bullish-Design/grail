@@ -1,0 +1,8 @@
+{
+  "code": "{'total': add(inputs['a'], inputs['b'])}",
+  "expected_output": {"total": 9},
+  "inputs": {"a": 4, "b": 5},
+  "tool_calls": [
+    {"args": [4, 5], "kwargs": {}, "name": "add"}
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "error_type": "GrailOutputValidationError",
+  "tool_calls": [
+    {"args": [4, 5], "kwargs": {}, "name": "add"}
+  ]
+}

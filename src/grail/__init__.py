@@ -3,17 +3,23 @@
 from .context import (
     GrailExecutionError,
     GrailLimitError,
+    GrailOutputValidationError,
     GrailValidationError,
     MontyContext,
 )
+from .stubs import StubGenerator
+from .tools import ToolRegistry
 from .types import ResourceLimits, merge_resource_limits
 
 __all__ = [
     "GrailExecutionError",
     "GrailLimitError",
+    "GrailOutputValidationError",
     "GrailValidationError",
     "MontyContext",
     "ResourceLimits",
+    "StubGenerator",
+    "ToolRegistry",
     "merge_resource_limits",
 ]
 
