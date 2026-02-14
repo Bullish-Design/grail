@@ -8,8 +8,12 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel
-
-from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected,
+    load_input,
+    resolve_contract_payload,
+)
 
 from grail.context import GrailOutputValidationError, MontyContext
 
@@ -111,14 +115,16 @@ def test_step4_pause_resume_contract(fake_monty: None) -> None:
     snapshot = asyncio.run(ctx.start(payload["code"], payload["inputs"]))
     completed = snapshot.resume(return_value=payload["resume_return_value"])
 
-    actual = {
-        "paused": {
-            "function_name": snapshot.function_name,
-            "args": list(snapshot.args or ()),
-            "kwargs": snapshot.kwargs or {},
-        },
-        "result": completed.output.model_dump(mode="python"),
-    }
+    actual = resolve_contract_payload(
+        output={
+            "paused": {
+                "function_name": snapshot.function_name,
+                "args": list(snapshot.args or ()),
+                "kwargs": snapshot.kwargs or {},
+            },
+            "result": completed.output.model_dump(mode="python"),
+        }
+    )
 
     assert_contract(fixture_name, expected=expected, actual=actual, input_payload=payload)
 
@@ -136,14 +142,16 @@ def test_step4_dump_load_binary_integrity_contract(fake_monty: None) -> None:
     data = snapshot.dump()
     restored = ctx.load_snapshot(data)
 
-    actual = {
-        "dump_hex": data.hex(),
-        "restored": {
-            "function_name": restored.function_name,
-            "args": list(restored.args or ()),
-            "kwargs": restored.kwargs or {},
-        },
-    }
+    actual = resolve_contract_payload(
+        output={
+            "dump_hex": data.hex(),
+            "restored": {
+                "function_name": restored.function_name,
+                "args": list(restored.args or ()),
+                "kwargs": restored.kwargs or {},
+            },
+        }
+    )
 
     assert_contract(fixture_name, expected=expected, actual=actual, input_payload=payload)
 
@@ -164,11 +172,13 @@ def test_step4_restore_fresh_context_contract(fake_monty: None) -> None:
     restored = second.load_snapshot(data)
     completed = restored.resume(return_value=payload["resume_return_value"])
 
-    actual = {
-        "first_events": first.debug_payload["events"],
-        "second_events": second.debug_payload["events"],
-        "result": completed.output.model_dump(mode="python"),
-    }
+    actual = resolve_contract_payload(
+        output={
+            "first_events": first.debug_payload["events"],
+            "second_events": second.debug_payload["events"],
+            "result": completed.output.model_dump(mode="python"),
+        }
+    )
 
     assert_contract(fixture_name, expected=expected, actual=actual, input_payload=payload)
 

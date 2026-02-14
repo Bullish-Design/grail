@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import pytest
 from pydantic import BaseModel
-
-from tests.helpers.io_contracts import assert_contract, load_expected_text, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected_text,
+    load_input,
+    resolve_contract_payload,
+)
 
 from grail.stubs import StubGenerator
 
@@ -30,10 +34,12 @@ def test_step2_stub_snapshot_contract() -> None:
     fixture_name = "step2-basic"
     payload = load_input("step2-sync-tool")
 
-    actual = StubGenerator().generate(
-        input_model=StubInput,
-        output_model=StubOutput,
-        tools=[tool_async, tool_sync],
+    actual = resolve_contract_payload(
+        output=StubGenerator().generate(
+            input_model=StubInput,
+            output_model=StubOutput,
+            tools=[tool_async, tool_sync],
+        )
     )
     expected = load_expected_text(fixture_name, section="stubs")
 

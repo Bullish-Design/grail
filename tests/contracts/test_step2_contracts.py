@@ -5,7 +5,12 @@ from pydantic import BaseModel
 
 pytest.importorskip("pydantic_monty")
 
-from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected,
+    load_input,
+    resolve_contract_payload,
+)
 
 from grail.context import GrailExecutionError, GrailOutputValidationError, MontyContext
 
@@ -49,10 +54,12 @@ def test_step2_tool_success_contracts(
     expected = load_expected(fixture_name)
     ctx = MontyContext(ToolInput, output_model=output_model, tools=tools)
 
-    actual = {
-        "result": ctx.execute(payload["code"], payload["inputs"]).model_dump(mode="python"),
-        "tool_calls": payload["tool_calls"],
-    }
+    actual = resolve_contract_payload(
+        output={
+            "result": ctx.execute(payload["code"], payload["inputs"]).model_dump(mode="python")
+        },
+        tool_calls=payload["tool_calls"],
+    )
 
     assert_contract(
         fixture_name,
@@ -73,7 +80,10 @@ def test_step2_tool_exception_contract() -> None:
     with pytest.raises(GrailExecutionError) as exc_info:
         ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {"error_type": type(exc_info.value).__name__, "tool_calls": payload["tool_calls"]}
+    actual = resolve_contract_payload(
+        error={"error_type": type(exc_info.value).__name__},
+        tool_calls=payload["tool_calls"],
+    )
 
     assert_contract(
         fixture_name,
@@ -94,7 +104,10 @@ def test_step2_unknown_tool_contract() -> None:
     with pytest.raises(GrailExecutionError) as exc_info:
         ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {"error_type": type(exc_info.value).__name__, "tool_calls": payload["tool_calls"]}
+    actual = resolve_contract_payload(
+        error={"error_type": type(exc_info.value).__name__},
+        tool_calls=payload["tool_calls"],
+    )
 
     assert_contract(
         fixture_name,
@@ -115,7 +128,10 @@ def test_step2_output_validation_failure_contract() -> None:
     with pytest.raises(GrailOutputValidationError) as exc_info:
         ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {"error_type": type(exc_info.value).__name__, "tool_calls": payload["tool_calls"]}
+    actual = resolve_contract_payload(
+        error={"error_type": type(exc_info.value).__name__},
+        tool_calls=payload["tool_calls"],
+    )
 
     assert_contract(
         fixture_name,

@@ -7,8 +7,12 @@ from typing import Any
 
 import pytest
 from pydantic import BaseModel
-
-from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected,
+    load_input,
+    resolve_contract_payload,
+)
 
 from grail.context import GrailExecutionError, MontyContext
 from grail.filesystem import FilePermission, callback_filesystem, memory_filesystem
@@ -121,7 +125,7 @@ def test_step4_filesystem_fixtures_contract(fake_monty: None) -> None:
     expected = load_expected(name)
 
     ctx = MontyContext(FilesystemInput, filesystem=_build_filesystem(payload))
-    actual = ctx.execute(payload["code"], payload["inputs"])
+    actual = resolve_contract_payload(output=ctx.execute(payload["code"], payload["inputs"]))
 
     assert_contract(name, expected=expected, actual=actual, input_payload=payload)
 
@@ -139,7 +143,7 @@ def test_step4_filesystem_permission_denied_contract(fake_monty: None) -> None:
     with pytest.raises(GrailExecutionError) as exc_info:
         _ = ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {"error": str(exc_info.value)}
+    actual = resolve_contract_payload(error={"error": str(exc_info.value)})
     assert_contract(name, expected=expected, actual=actual, input_payload=payload)
 
 
@@ -156,5 +160,5 @@ def test_step4_filesystem_isolation_violation_contract(fake_monty: None) -> None
     with pytest.raises(GrailExecutionError) as exc_info:
         _ = ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {"error": str(exc_info.value)}
+    actual = resolve_contract_payload(error={"error": str(exc_info.value)})
     assert_contract(name, expected=expected, actual=actual, input_payload=payload)

@@ -5,8 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
-
-from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+from tests.helpers.io_contracts import (
+    assert_contract,
+    load_expected,
+    load_input,
+    resolve_contract_payload,
+)
 
 from grail.context import MontyContext
 
@@ -62,13 +66,15 @@ def test_step3_debug_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     ctx = MontyContext(ToolInput, output_model=ToolOutput, tools=[add], debug=True)
     result = ctx.execute(payload["code"], payload["inputs"])
 
-    actual = {
-        "result_total": result.total,
-        "events": ctx.debug_payload["events"],
-        "stdout": ctx.debug_payload["stdout"],
-        "stderr": ctx.debug_payload["stderr"],
-        "tool_call": ctx.debug_payload["tool_calls"][0],
-    }
+    actual = resolve_contract_payload(
+        output={
+            "result_total": result.total,
+            "events": ctx.debug_payload["events"],
+            "stdout": ctx.debug_payload["stdout"],
+            "stderr": ctx.debug_payload["stderr"],
+            "tool_call": ctx.debug_payload["tool_calls"][0],
+        }
+    )
 
     assert_contract(
         fixture_name,
