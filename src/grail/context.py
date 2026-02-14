@@ -61,6 +61,9 @@ class MontyContext(Generic[InputT, OutputT]):
         tools: list[Callable[..., Any]] | None = None,
         filesystem: Any | None = None,
         debug: bool = False,
+        debug_max_output_chars: int | None = None,
+        debug_max_tool_calls: int | None = None,
+        debug_max_events: int | None = None,
         logger: StructuredLogger | None = None,
         metrics: MetricsCollector | None = None,
     ) -> None:
@@ -71,30 +74,25 @@ class MontyContext(Generic[InputT, OutputT]):
         self.filesystem = filesystem
         self.stub_generator = StubGenerator()
         self.debug = debug
+        self.debug_max_output_chars = debug_max_output_chars
+        self.debug_max_tool_calls = debug_max_tool_calls
+        self.debug_max_events = debug_max_events
         self.resource_metrics = ResourceUsageMetrics()
         self.logger = logger or StructuredLogger()
         self.metrics = metrics or MetricsCollector()
-        self._debug_payload: DebugPayload = {
-            "events": [],
-            "stdout": "",
-            "stderr": "",
-            "tool_calls": [],
-            "resource_metrics": self.resource_metrics.model_dump(exclude_none=True),
-        }
+        self._debug_payload = self._new_debug_payload()
 
     @property
     def debug_payload(self) -> DebugPayload:
         return self._debug_payload
 
+    def clear_debug_payload(self) -> None:
+        self.resource_metrics = ResourceUsageMetrics()
+        self._debug_payload = self._new_debug_payload()
+
     async def execute_async(self, code: str, inputs: InputT | dict[str, Any]) -> Any | OutputT:
         """Validate input data and execute code in Monty."""
-        self._debug_payload = {
-            "events": [],
-            "stdout": "",
-            "stderr": "",
-            "tool_calls": [],
-            "resource_metrics": {},
-        }
+        self._debug_payload = self._new_debug_payload(resource_metrics={})
         self._event("validate-inputs")
         with self.metrics.timer("validate_inputs"):
             validated_inputs = self._validate_inputs(inputs)
@@ -157,19 +155,13 @@ class MontyContext(Generic[InputT, OutputT]):
             self.metrics.increment("executions_failed")
             raise self._normalize_monty_exception(exc) from exc
         finally:
-            self._debug_payload["stdout"] += out.getvalue()
-            self._debug_payload["stderr"] += err.getvalue()
+            self._append_debug_stream("stdout", out.getvalue())
+            self._append_debug_stream("stderr", err.getvalue())
             self._event("finished")
 
     async def start(self, code: str, inputs: InputT | dict[str, Any]) -> MontySnapshot:
         """Validate input data and begin execution in resumable mode."""
-        self._debug_payload = {
-            "events": [],
-            "stdout": "",
-            "stderr": "",
-            "tool_calls": [],
-            "resource_metrics": {},
-        }
+        self._debug_payload = self._new_debug_payload(resource_metrics={})
         self._event("validate-inputs")
         with self.metrics.timer("validate_inputs"):
             validated_inputs = self._validate_inputs(inputs)
@@ -314,8 +306,8 @@ class MontyContext(Generic[InputT, OutputT]):
                 if inspect.isawaitable(state):
                     state = await state
         finally:
-            self._debug_payload["stdout"] += out.getvalue()
-            self._debug_payload["stderr"] += err.getvalue()
+            self._append_debug_stream("stdout", out.getvalue())
+            self._append_debug_stream("stderr", err.getvalue())
             self._event("finished")
 
         return MontySnapshot(
@@ -378,9 +370,9 @@ class MontyContext(Generic[InputT, OutputT]):
 
     def _print_callback(self, stream: str, text: str) -> None:
         if stream == "stdout":
-            self._debug_payload["stdout"] += text
+            self._append_debug_stream("stdout", text)
         elif stream == "stderr":
-            self._debug_payload["stderr"] += text
+            self._append_debug_stream("stderr", text)
 
     def _coerce_external_functions(self, kwargs: dict[str, Any]) -> None:
         value = kwargs.get("external_functions")
@@ -412,7 +404,7 @@ class MontyContext(Generic[InputT, OutputT]):
     def _event(self, value: str) -> None:
         self.logger.emit("grail.lifecycle", step=value)
         if self.debug:
-            self._debug_payload["events"].append(value)
+            self._append_debug_list("events", value, self.debug_max_events)
 
     def _capture_resource_metrics(self, result: Any) -> None:
         payload = None
@@ -446,9 +438,49 @@ class MontyContext(Generic[InputT, OutputT]):
             result = fn(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result
-            self._debug_payload["tool_calls"].append(
-                {"name": name, "args": list(args), "kwargs": kwargs, "result": result}
+            self._append_debug_list(
+                "tool_calls",
+                {"name": name, "args": list(args), "kwargs": kwargs, "result": result},
+                self.debug_max_tool_calls,
             )
             return result
 
         return _inner
+
+    def _new_debug_payload(self, resource_metrics: dict[str, Any] | None = None) -> DebugPayload:
+        metrics_payload = (
+            self.resource_metrics.model_dump(exclude_none=True)
+            if resource_metrics is None
+            else resource_metrics
+        )
+        return {
+            "events": [],
+            "stdout": "",
+            "stderr": "",
+            "tool_calls": [],
+            "resource_metrics": metrics_payload,
+        }
+
+    def _append_debug_stream(self, stream: str, text: str) -> None:
+        current = self._debug_payload[stream]
+        combined = current + text
+        max_chars = self.debug_max_output_chars
+        if max_chars is None:
+            self._debug_payload[stream] = combined
+            return
+        if max_chars <= 0:
+            self._debug_payload[stream] = ""
+            return
+        self._debug_payload[stream] = combined[-max_chars:]
+
+    def _append_debug_list(self, key: str, value: Any, max_items: int | None) -> None:
+        entries = self._debug_payload[key]
+        entries.append(value)
+        if max_items is None:
+            return
+        if max_items <= 0:
+            entries.clear()
+            return
+        overflow = len(entries) - max_items
+        if overflow > 0:
+            del entries[:overflow]
