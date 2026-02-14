@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import errno
 import sys
 from types import SimpleNamespace
@@ -181,3 +182,54 @@ def test_output_validation_error_is_mapped(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(GrailOutputValidationError):
         ctx.execute("ignored", {"name": "alice", "count": 2})
+
+
+@pytest.mark.unit
+def test_debug_payload_retention_caps_streams_events_and_tool_calls() -> None:
+    ctx = MontyContext(
+        UserInput,
+        debug=True,
+        tools=[lambda value: value + 1],
+        debug_max_output_chars=5,
+        debug_max_events=2,
+        debug_max_tool_calls=1,
+    )
+
+    ctx._print_callback("stdout", "hello")
+    ctx._print_callback("stdout", "world")
+    ctx._print_callback("stderr", "oops")
+    ctx._print_callback("stderr", "error")
+
+    ctx._event("one")
+    ctx._event("two")
+    ctx._event("three")
+
+    tool = ctx._debug_tools_mapping()["<lambda>"]
+    assert asyncio.run(tool(3)) == 4
+    assert asyncio.run(tool(4)) == 5
+
+    payload = ctx.debug_payload
+    assert payload["stdout"] == "world"
+    assert payload["stderr"] == "error"
+    assert payload["events"] == ["two", "three"]
+    assert len(payload["tool_calls"]) == 1
+    assert payload["tool_calls"][0]["args"] == [4]
+
+
+@pytest.mark.unit
+def test_clear_debug_payload_resets_state_and_resource_metrics() -> None:
+    ctx = MontyContext(UserInput, debug=True)
+    ctx._print_callback("stdout", "x")
+    ctx._event("started")
+    ctx.resource_metrics.exceeded.append("runtime_limit")
+    ctx._debug_payload["resource_metrics"] = {"exceeded": ["runtime_limit"]}
+
+    ctx.clear_debug_payload()
+
+    payload = ctx.debug_payload
+    assert payload["stdout"] == ""
+    assert payload["stderr"] == ""
+    assert payload["events"] == []
+    assert payload["tool_calls"] == []
+    assert payload["resource_metrics"] == {"exceeded": []}
+    assert ctx.resource_metrics.exceeded == []
