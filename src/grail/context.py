@@ -206,6 +206,9 @@ class MontyContext(Generic[InputT, OutputT]):
             NativeMontySnapshot.load,
             {
                 "print_callback": self._print_callback,
+                "os": self.filesystem,
+                "filesystem": self.filesystem,
+                "os_access": self.filesystem,
                 **kwargs,
             },
             drop_required=(),

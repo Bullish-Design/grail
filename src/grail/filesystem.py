@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from enum import Enum
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, TypeVar
 
 from pydantic_monty import AbstractOS, CallbackFile, MemoryFile, OSAccess
 
@@ -26,6 +26,13 @@ ReadHook = Callable[[PurePosixPath], str | bytes]
 WriteHook = Callable[[PurePosixPath, str | bytes], None]
 
 
+T = TypeVar("T")
+
+
+def _normalized_paths(mapping: Mapping[str | PurePosixPath, T] | None) -> dict[PurePosixPath, T]:
+    return {PurePosixPath(path): value for path, value in (mapping or {}).items()}
+
+
 class GrailFilesystem(AbstractOS):
     """Guarded OS adapter with explicit path permissions."""
 
@@ -42,13 +49,9 @@ class GrailFilesystem(AbstractOS):
         self._os = os_access
         self._root = PurePosixPath(root_dir)
         self._default_permission = default_permission
-        self._permissions = {
-            PurePosixPath(path): mode for path, mode in (permissions or {}).items()
-        }
-        self._read_hooks = {PurePosixPath(path): cb for path, cb in (read_hooks or {}).items()}
-        self._write_hooks = {
-            PurePosixPath(path): cb for path, cb in (write_hooks or {}).items()
-        }
+        self._permissions = _normalized_paths(permissions)
+        self._read_hooks = _normalized_paths(read_hooks)
+        self._write_hooks = _normalized_paths(write_hooks)
 
     def _normalize(self, path: PurePosixPath) -> PurePosixPath:
         normalized = PurePosixPath(self._os.path_absolute(path))
@@ -195,6 +198,29 @@ def memory_filesystem(
         root_dir=root_dir,
         permissions=permissions,
         default_permission=default_permission,
+    )
+
+
+def hooked_filesystem(
+    *,
+    read_hooks: Mapping[str | PurePosixPath, ReadHook] | None = None,
+    write_hooks: Mapping[str | PurePosixPath, WriteHook] | None = None,
+    files: Mapping[str | PurePosixPath, str | bytes] | None = None,
+    root_dir: str | PurePosixPath = "/",
+    permissions: Mapping[str | PurePosixPath, FilePermission] | None = None,
+    default_permission: FilePermission = FilePermission.DENY,
+) -> GrailFilesystem:
+    """Build a filesystem with optional seed files and prefix path hooks."""
+    return GrailFilesystem(
+        OSAccess(
+            [MemoryFile(path, content) for path, content in (files or {}).items()],
+            root_dir=root_dir,
+        ),
+        root_dir=root_dir,
+        permissions=permissions,
+        default_permission=default_permission,
+        read_hooks=read_hooks,
+        write_hooks=write_hooks,
     )
 
 

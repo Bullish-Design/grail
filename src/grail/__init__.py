@@ -8,7 +8,13 @@ from .errors import (
     GrailOutputValidationError,
     GrailValidationError,
 )
-from .filesystem import FilePermission, GrailFilesystem, callback_filesystem, memory_filesystem
+from .filesystem import (
+    FilePermission,
+    GrailFilesystem,
+    callback_filesystem,
+    hooked_filesystem,
+    memory_filesystem,
+)
 from .policies import (
     AI_AGENT_POLICY,
     NAMED_POLICIES,
@@ -40,6 +46,7 @@ __all__ = [
     "GrailFilesystem",
     "memory_filesystem",
     "callback_filesystem",
+    "hooked_filesystem",
     "MontyContext",
     "ResourceGuard",
     "ResourceUsageMetrics",
