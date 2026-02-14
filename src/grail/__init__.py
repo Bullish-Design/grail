@@ -9,6 +9,17 @@ from .errors import (
     GrailValidationError,
 )
 from .filesystem import FilePermission, GrailFilesystem, callback_filesystem, memory_filesystem
+from .policies import (
+    AI_AGENT_POLICY,
+    NAMED_POLICIES,
+    PERMISSIVE_POLICY,
+    STRICT_POLICY,
+    PolicyValidationError,
+    ResourcePolicy,
+    resolve_effective_limits,
+    resolve_policy,
+)
+from .resource_guard import ResourceGuard, ResourceUsageMetrics
 from .snapshots import (
     MontySnapshot,
     deserialize_snapshot_payload,
@@ -30,6 +41,16 @@ __all__ = [
     "memory_filesystem",
     "callback_filesystem",
     "MontyContext",
+    "ResourceGuard",
+    "ResourceUsageMetrics",
+    "ResourcePolicy",
+    "PolicyValidationError",
+    "STRICT_POLICY",
+    "PERMISSIVE_POLICY",
+    "AI_AGENT_POLICY",
+    "NAMED_POLICIES",
+    "resolve_policy",
+    "resolve_effective_limits",
     "ResourceLimits",
     "snapshot_payload_to_base64",
     "snapshot_payload_from_base64",
