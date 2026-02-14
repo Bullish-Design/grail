@@ -15,7 +15,12 @@ from tests.helpers.io_contracts import (
 )
 
 from grail.context import GrailExecutionError, MontyContext
-from grail.filesystem import FilePermission, callback_filesystem, memory_filesystem
+from grail.filesystem import (
+    FilePermission,
+    GrailFilesystem,
+    callback_filesystem,
+    memory_filesystem,
+)
 
 
 class FilesystemInput(BaseModel):
@@ -162,3 +167,49 @@ def test_step4_filesystem_isolation_violation_contract(fake_monty: None) -> None
 
     actual = resolve_contract_payload(error={"error": str(exc_info.value)})
     assert_contract(name, expected=expected, actual=actual, input_payload=payload)
+
+
+class _ResolveAwareOS:
+    def __init__(self, *, absolute_map: dict[str, str] | None = None, resolve_map: dict[str, str] | None = None) -> None:
+        self.absolute_map = absolute_map or {}
+        self.resolve_map = resolve_map or {}
+
+    def path_absolute(self, path: Path) -> str:
+        return self.absolute_map.get(str(path), str(path))
+
+    def path_resolve(self, path: Path) -> str:
+        return self.resolve_map.get(str(path), str(path))
+
+
+@pytest.mark.unit
+def test_step4_filesystem_allows_symlink_resolving_within_root() -> None:
+    filesystem = GrailFilesystem(
+        _ResolveAwareOS(resolve_map={"/sandbox/link": "/sandbox/target"}),
+        root_dir="/sandbox",
+    )
+
+    normalized = filesystem._normalize(Path("/sandbox/link"))
+
+    assert normalized == Path("/sandbox/link")
+
+
+@pytest.mark.unit
+def test_step4_filesystem_denies_symlink_resolving_outside_root() -> None:
+    filesystem = GrailFilesystem(
+        _ResolveAwareOS(resolve_map={"/sandbox/link": "/etc/passwd"}),
+        root_dir="/sandbox",
+    )
+
+    with pytest.raises(PermissionError, match="Path escapes filesystem root: /etc/passwd"):
+        _ = filesystem._normalize(Path("/sandbox/link"))
+
+
+@pytest.mark.unit
+def test_step4_filesystem_denies_direct_parent_traversal() -> None:
+    filesystem = GrailFilesystem(
+        _ResolveAwareOS(absolute_map={"../secret": "/sandbox/../secret"}),
+        root_dir="/sandbox",
+    )
+
+    with pytest.raises(PermissionError, match="Path escapes filesystem root: /sandbox/../secret"):
+        _ = filesystem._normalize(Path("../secret"))
