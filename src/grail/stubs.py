@@ -166,6 +166,7 @@ class StubGenerator:
         return "\n".join(lines).strip() + "\n"
 
     def _reset(self) -> None:
+        """Clear per-run type discovery state before building a new stub set."""
         self._uses_any = False
         self._uses_callable = False
         self._new_types = {}
