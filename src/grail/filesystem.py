@@ -1,0 +1,229 @@
+"""Filesystem adapters for integrating pydantic_monty OSAccess with Grail contexts."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from enum import Enum
+from pathlib import PurePosixPath
+from typing import Any
+
+from pydantic_monty import AbstractOS, CallbackFile, MemoryFile, OSAccess
+
+
+class FilePermission(str, Enum):
+    READ = "read"
+    WRITE = "write"
+    DENY = "deny"
+
+
+PERMISSION_TO_MODE: dict[FilePermission, int] = {
+    FilePermission.READ: 0o444,
+    FilePermission.WRITE: 0o222,
+    FilePermission.DENY: 0o000,
+}
+
+ReadHook = Callable[[PurePosixPath], str | bytes]
+WriteHook = Callable[[PurePosixPath, str | bytes], None]
+
+
+class GrailFilesystem(AbstractOS):
+    """Guarded OS adapter with explicit path permissions."""
+
+    def __init__(
+        self,
+        os_access: AbstractOS,
+        *,
+        root_dir: str | PurePosixPath = "/",
+        permissions: Mapping[str | PurePosixPath, FilePermission] | None = None,
+        default_permission: FilePermission = FilePermission.DENY,
+        read_hooks: Mapping[str | PurePosixPath, ReadHook] | None = None,
+        write_hooks: Mapping[str | PurePosixPath, WriteHook] | None = None,
+    ) -> None:
+        self._os = os_access
+        self._root = PurePosixPath(root_dir)
+        self._default_permission = default_permission
+        self._permissions = {
+            PurePosixPath(path): mode for path, mode in (permissions or {}).items()
+        }
+        self._read_hooks = {PurePosixPath(path): cb for path, cb in (read_hooks or {}).items()}
+        self._write_hooks = {
+            PurePosixPath(path): cb for path, cb in (write_hooks or {}).items()
+        }
+
+    def _normalize(self, path: PurePosixPath) -> PurePosixPath:
+        normalized = PurePosixPath(self._os.path_absolute(path))
+        if ".." in normalized.parts:
+            raise PermissionError(f"Path escapes filesystem root: {normalized}")
+        try:
+            normalized.relative_to(self._root)
+        except ValueError as exc:
+            raise PermissionError(f"Path escapes filesystem root: {normalized}") from exc
+        return normalized
+
+    def _permission_for(self, path: PurePosixPath) -> FilePermission:
+        current = path
+        while True:
+            if current in self._permissions:
+                return self._permissions[current]
+            if current == current.parent:
+                break
+            current = current.parent
+        return self._default_permission
+
+    def _assert_read_allowed(self, path: PurePosixPath) -> None:
+        if self._permission_for(path) not in (FilePermission.READ, FilePermission.WRITE):
+            raise PermissionError(f"Read denied for path: {path}")
+
+    def _assert_write_allowed(self, path: PurePosixPath) -> None:
+        if self._permission_for(path) is not FilePermission.WRITE:
+            raise PermissionError(f"Write denied for path: {path}")
+
+    def _iter_prefix_hooks(
+        self, mapping: dict[PurePosixPath, Any], path: PurePosixPath
+    ) -> Any | None:
+        for candidate in sorted(mapping, key=lambda item: len(item.parts), reverse=True):
+            if path == candidate or path.is_relative_to(candidate):
+                return mapping[candidate]
+        return None
+
+    def path_exists(self, path: PurePosixPath) -> bool:
+        return self._os.path_exists(self._normalize(path))
+
+    def path_is_file(self, path: PurePosixPath) -> bool:
+        return self._os.path_is_file(self._normalize(path))
+
+    def path_is_dir(self, path: PurePosixPath) -> bool:
+        return self._os.path_is_dir(self._normalize(path))
+
+    def path_is_symlink(self, path: PurePosixPath) -> bool:
+        return self._os.path_is_symlink(self._normalize(path))
+
+    def path_read_text(self, path: PurePosixPath) -> str:
+        normalized = self._normalize(path)
+        self._assert_read_allowed(normalized)
+        hook = self._iter_prefix_hooks(self._read_hooks, normalized)
+        if hook is not None:
+            value = hook(normalized)
+            return value if isinstance(value, str) else value.decode()
+        return self._os.path_read_text(normalized)
+
+    def path_read_bytes(self, path: PurePosixPath) -> bytes:
+        normalized = self._normalize(path)
+        self._assert_read_allowed(normalized)
+        hook = self._iter_prefix_hooks(self._read_hooks, normalized)
+        if hook is not None:
+            value = hook(normalized)
+            return value if isinstance(value, bytes) else value.encode()
+        return self._os.path_read_bytes(normalized)
+
+    def path_write_text(self, path: PurePosixPath, data: str) -> int:
+        normalized = self._normalize(path)
+        self._assert_write_allowed(normalized)
+        hook = self._iter_prefix_hooks(self._write_hooks, normalized)
+        if hook is not None:
+            hook(normalized, data)
+            return len(data)
+        return self._os.path_write_text(normalized, data)
+
+    def path_write_bytes(self, path: PurePosixPath, data: bytes) -> int:
+        normalized = self._normalize(path)
+        self._assert_write_allowed(normalized)
+        hook = self._iter_prefix_hooks(self._write_hooks, normalized)
+        if hook is not None:
+            hook(normalized, data)
+            return len(data)
+        return self._os.path_write_bytes(normalized, data)
+
+    def path_mkdir(self, path: PurePosixPath, parents: bool, exist_ok: bool) -> None:
+        self._assert_write_allowed(self._normalize(path))
+        return self._os.path_mkdir(self._normalize(path), parents=parents, exist_ok=exist_ok)
+
+    def path_unlink(self, path: PurePosixPath) -> None:
+        self._assert_write_allowed(self._normalize(path))
+        return self._os.path_unlink(self._normalize(path))
+
+    def path_rmdir(self, path: PurePosixPath) -> None:
+        self._assert_write_allowed(self._normalize(path))
+        return self._os.path_rmdir(self._normalize(path))
+
+    def path_iterdir(self, path: PurePosixPath) -> list[PurePosixPath]:
+        self._assert_read_allowed(self._normalize(path))
+        return self._os.path_iterdir(self._normalize(path))
+
+    def path_stat(self, path: PurePosixPath) -> Any:
+        self._assert_read_allowed(self._normalize(path))
+        return self._os.path_stat(self._normalize(path))
+
+    def path_rename(self, path: PurePosixPath, target: PurePosixPath) -> None:
+        self._assert_write_allowed(self._normalize(path))
+        self._assert_write_allowed(self._normalize(target))
+        return self._os.path_rename(self._normalize(path), self._normalize(target))
+
+    def path_resolve(self, path: PurePosixPath) -> str:
+        return self._os.path_resolve(self._normalize(path))
+
+    def path_absolute(self, path: PurePosixPath) -> str:
+        return self._os.path_absolute(path)
+
+    def getenv(self, key: str, default: str | None = None) -> str | None:
+        return self._os.getenv(key, default)
+
+    def get_environ(self) -> dict[str, str]:
+        return self._os.get_environ()
+
+
+def memory_filesystem(
+    files: Mapping[str | PurePosixPath, str | bytes],
+    *,
+    root_dir: str | PurePosixPath = "/",
+    permissions: Mapping[str | PurePosixPath, FilePermission] | None = None,
+    default_permission: FilePermission = FilePermission.DENY,
+) -> GrailFilesystem:
+    permission_map = permissions or {}
+    memory_files = [
+        MemoryFile(
+            path,
+            content,
+            permissions=PERMISSION_TO_MODE.get(
+                permission_map.get(path, FilePermission.READ), 0o444
+            ),
+        )
+        for path, content in files.items()
+    ]
+    return GrailFilesystem(
+        OSAccess(memory_files, root_dir=root_dir),
+        root_dir=root_dir,
+        permissions=permissions,
+        default_permission=default_permission,
+    )
+
+
+def callback_filesystem(
+    files: Mapping[str | PurePosixPath, tuple[ReadHook, WriteHook]],
+    *,
+    root_dir: str | PurePosixPath = "/",
+    permissions: Mapping[str | PurePosixPath, FilePermission] | None = None,
+    default_permission: FilePermission = FilePermission.DENY,
+    read_hooks: Mapping[str | PurePosixPath, ReadHook] | None = None,
+    write_hooks: Mapping[str | PurePosixPath, WriteHook] | None = None,
+) -> GrailFilesystem:
+    permission_map = permissions or {}
+    callback_files = [
+        CallbackFile(
+            path,
+            read=read,
+            write=write,
+            permissions=PERMISSION_TO_MODE.get(
+                permission_map.get(path, FilePermission.READ), 0o444
+            ),
+        )
+        for path, (read, write) in files.items()
+    ]
+    return GrailFilesystem(
+        OSAccess(callback_files, root_dir=root_dir),
+        root_dir=root_dir,
+        permissions=permissions,
+        default_permission=default_permission,
+        read_hooks=read_hooks,
+        write_hooks=write_hooks,
+    )
