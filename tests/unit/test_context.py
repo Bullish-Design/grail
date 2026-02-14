@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import sys
 from types import SimpleNamespace
 
@@ -71,6 +72,19 @@ def test_execute_limit_failure_maps_limit_error() -> None:
             ),
             {"name": "alice", "count": 2},
         )
+
+
+@pytest.mark.unit
+def test_normalize_oserror_eacces_maps_permission_denied() -> None:
+    ctx = MontyContext(UserInput)
+
+    exc = OSError("blocked")
+    exc.errno = errno.EACCES
+
+    normalized = ctx._normalize_monty_exception(exc)
+
+    assert isinstance(normalized, GrailExecutionError)
+    assert str(normalized) == "Monty filesystem permission denied: blocked"
 
 
 @pytest.mark.unit
