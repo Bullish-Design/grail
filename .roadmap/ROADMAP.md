@@ -18,14 +18,13 @@ This roadmap outlines the development journey for Grail, a Pydantic-native wrapp
 
 2. **Dependency Management**
    - Verify `pydantic_monty` installation
-   - Add development dependencies (pytest, pytest-asyncio, mypy, ruff)
+   - Add development dependencies (pytest, pytest-asyncio, ty, ruff)
    - Configure `pyproject.toml` with project metadata and build system
 
 3. **Development Tooling**
-   - Configure mypy for strict type checking
+   - Configure ty for strict type checking
    - Set up ruff for linting and formatting
    - Add pre-commit hooks (optional but recommended)
-   - Configure CI/CD skeleton (GitHub Actions or equivalent)
 
 4. **Basic Smoke Test**
    - Create `tests/test_smoke.py` that imports `pydantic_monty` and runs a trivial Monty execution
@@ -41,7 +40,7 @@ This roadmap outlines the development journey for Grail, a Pydantic-native wrapp
 
 - **Tooling Validation:**
   - `pytest` discovers and runs smoke test
-  - `mypy` runs without errors on empty codebase
+  - `ty` runs without errors on empty codebase
   - `ruff check` and `ruff format` execute successfully
 
 **Success Criteria:** A contributor can clone the repo, run `pip install -e .`, and execute `pytest` to see passing smoke tests.
@@ -229,7 +228,7 @@ assert isinstance(result, OutputModel)
 - **Documentation:**
   - All public APIs have docstrings
   - Examples in docstrings run without error
-  - Type hints pass mypy strict mode
+  - Type hints pass ty strict mode
 
 **Success Criteria:** Can use decorator syntax for simple use case:
 
