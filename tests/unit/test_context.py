@@ -1,15 +1,28 @@
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import pytest
 from pydantic import BaseModel
 
-from grail.context import GrailExecutionError, GrailLimitError, GrailValidationError, MontyContext
+from grail.context import (
+    GrailExecutionError,
+    GrailLimitError,
+    GrailOutputValidationError,
+    GrailValidationError,
+    MontyContext,
+)
 from grail.types import merge_resource_limits
 
 
 class UserInput(BaseModel):
     name: str
     count: int
+
+
+class CountOutput(BaseModel):
+    total: int
 
 
 @pytest.mark.unit
@@ -57,3 +70,72 @@ def test_execute_limit_failure_maps_limit_error() -> None:
             ),
             {"name": "alice", "count": 2},
         )
+
+
+@pytest.mark.unit
+def test_output_validation_uses_output_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeMonty:
+        def __init__(self, code: str, *, inputs: list[str], type_definitions: str) -> None:
+            self.code = code
+            self.inputs = inputs
+            self.type_definitions = type_definitions
+
+    class FakeMontyError(Exception):
+        pass
+
+    async def fake_run_monty_async(
+        runner: FakeMonty,
+        *,
+        inputs: dict[str, object],
+        limits: dict[str, object],
+        tools: dict[str, object],
+    ) -> dict[str, int]:
+        return {"total": 9}
+
+    fake_module = SimpleNamespace(
+        Monty=FakeMonty,
+        MontyError=FakeMontyError,
+        MontyRuntimeError=FakeMontyError,
+        run_monty_async=fake_run_monty_async,
+    )
+    monkeypatch.setitem(sys.modules, "pydantic_monty", fake_module)
+
+    ctx = MontyContext(UserInput, output_model=CountOutput)
+    result = ctx.execute("ignored", {"name": "alice", "count": 2})
+
+    assert isinstance(result, CountOutput)
+    assert result.total == 9
+
+
+@pytest.mark.unit
+def test_output_validation_error_is_mapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeMonty:
+        def __init__(self, code: str, *, inputs: list[str], type_definitions: str) -> None:
+            self.code = code
+            self.inputs = inputs
+            self.type_definitions = type_definitions
+
+    class FakeMontyError(Exception):
+        pass
+
+    async def fake_run_monty_async(
+        runner: FakeMonty,
+        *,
+        inputs: dict[str, object],
+        limits: dict[str, object],
+        tools: dict[str, object],
+    ) -> dict[str, str]:
+        return {"total": "bad"}
+
+    fake_module = SimpleNamespace(
+        Monty=FakeMonty,
+        MontyError=FakeMontyError,
+        MontyRuntimeError=FakeMontyError,
+        run_monty_async=fake_run_monty_async,
+    )
+    monkeypatch.setitem(sys.modules, "pydantic_monty", fake_module)
+
+    ctx = MontyContext(UserInput, output_model=CountOutput)
+
+    with pytest.raises(GrailOutputValidationError):
+        ctx.execute("ignored", {"name": "alice", "count": 2})
