@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from pydantic import BaseModel
+
+from tests.helpers.io_contracts import assert_contract, load_expected, load_input
 
 from grail.context import MontyContext
 
@@ -54,21 +55,24 @@ def test_step3_debug_contract(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setitem(sys.modules, "pydantic_monty", fake_module)
 
-    payload = Path("tests/fixtures/inputs/step3-debug.json").read_text(encoding="utf-8")
-    expected_payload = Path("tests/fixtures/expected/debug/step3-debug.json").read_text(
-        encoding="utf-8"
-    )
-
-    import json
-
-    payload_json = json.loads(payload)
-    expected = json.loads(expected_payload)
+    fixture_name = "step3-debug"
+    payload = load_input(fixture_name)
+    expected = load_expected(fixture_name, section="debug")
 
     ctx = MontyContext(ToolInput, output_model=ToolOutput, tools=[add], debug=True)
-    result = ctx.execute(payload_json["code"], payload_json["inputs"])
+    result = ctx.execute(payload["code"], payload["inputs"])
 
-    assert result.total == 6
-    assert ctx.debug_payload["events"] == expected["events"]
-    assert expected["stdout_fragment"] in ctx.debug_payload["stdout"]
-    assert ctx.debug_payload["stderr"] == expected["stderr"]
-    assert ctx.debug_payload["tool_calls"][0] == expected["tool_call"]
+    actual = {
+        "result_total": result.total,
+        "events": ctx.debug_payload["events"],
+        "stdout": ctx.debug_payload["stdout"],
+        "stderr": ctx.debug_payload["stderr"],
+        "tool_call": ctx.debug_payload["tool_calls"][0],
+    }
+
+    assert_contract(
+        fixture_name,
+        expected=expected,
+        actual=actual,
+        input_payload=payload,
+    )

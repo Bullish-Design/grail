@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,17 +8,10 @@ from typing import Any
 import pytest
 from pydantic import BaseModel
 
+from tests.helpers.io_contracts import assert_contract, load_expected, load_input
+
 from grail.context import GrailExecutionError, MontyContext
 from grail.filesystem import FilePermission, callback_filesystem, memory_filesystem
-
-
-def _load_fixture(kind: str, name: str) -> dict[str, Any]:
-    path = Path("tests/fixtures") / kind / f"{name}.json"
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _assert_contract(name: str, *, expected: Any, actual: Any) -> None:
-    assert actual == expected, f"Fixture {name} mismatch\nExpected: {expected}\nActual: {actual}"
 
 
 class FilesystemInput(BaseModel):
@@ -123,22 +115,24 @@ def fake_monty(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_filesystem_fixtures_contract(fake_monty: None) -> None:
+    del fake_monty
     name = "step4-filesystem-seeded"
-    payload = _load_fixture("inputs", name)
-    expected = _load_fixture("expected", name)
+    payload = load_input(name)
+    expected = load_expected(name)
 
     ctx = MontyContext(FilesystemInput, filesystem=_build_filesystem(payload))
     actual = ctx.execute(payload["code"], payload["inputs"])
 
-    _assert_contract(name, expected=expected, actual=actual)
+    assert_contract(name, expected=expected, actual=actual, input_payload=payload)
 
 
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_filesystem_permission_denied_contract(fake_monty: None) -> None:
+    del fake_monty
     name = "step4-filesystem-permission-denied"
-    payload = _load_fixture("inputs", name)
-    expected = _load_fixture("expected", name)
+    payload = load_input(name)
+    expected = load_expected(name)
 
     ctx = MontyContext(FilesystemInput, filesystem=_build_filesystem(payload))
 
@@ -146,15 +140,16 @@ def test_step4_filesystem_permission_denied_contract(fake_monty: None) -> None:
         _ = ctx.execute(payload["code"], payload["inputs"])
 
     actual = {"error": str(exc_info.value)}
-    _assert_contract(name, expected=expected, actual=actual)
+    assert_contract(name, expected=expected, actual=actual, input_payload=payload)
 
 
 @pytest.mark.contract
 @pytest.mark.unit
 def test_step4_filesystem_isolation_violation_contract(fake_monty: None) -> None:
+    del fake_monty
     name = "step4-filesystem-isolation-violation"
-    payload = _load_fixture("inputs", name)
-    expected = _load_fixture("expected", name)
+    payload = load_input(name)
+    expected = load_expected(name)
 
     ctx = MontyContext(FilesystemInput, filesystem=_build_filesystem(payload))
 
@@ -162,4 +157,4 @@ def test_step4_filesystem_isolation_violation_contract(fake_monty: None) -> None
         _ = ctx.execute(payload["code"], payload["inputs"])
 
     actual = {"error": str(exc_info.value)}
-    _assert_contract(name, expected=expected, actual=actual)
+    assert_contract(name, expected=expected, actual=actual, input_payload=payload)
