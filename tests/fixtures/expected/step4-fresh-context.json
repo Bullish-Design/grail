@@ -1,0 +1,15 @@
+{
+  "first_events": [
+    "validate-inputs",
+    "build-runner",
+    "execute",
+    "finished"
+  ],
+  "second_events": [
+    "restore-snapshot",
+    "validate-output"
+  ],
+  "result": {
+    "total": 9
+  }
+}

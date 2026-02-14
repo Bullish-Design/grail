@@ -20,6 +20,7 @@ from .errors import (
     format_runtime_error,
     format_validation_error,
 )
+from .snapshots import MontySnapshot
 from .stubs import StubGenerator
 from .tools import ToolRegistry
 from .types import ResourceLimits, merge_resource_limits
@@ -82,7 +83,7 @@ class MontyContext(Generic[InputT, OutputT]):
             tools=[self.tools.as_mapping()[name] for name in self.tools.names],
         )
 
-        from pydantic_monty import Monty, MontyError, MontyRuntimeError, run_monty_async
+        from pydantic_monty import Monty, run_monty_async
 
         monty_kwargs = self._supported_kwargs(
             Monty,
@@ -116,34 +117,82 @@ class MontyContext(Generic[InputT, OutputT]):
             self._event("execute")
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 result = await run_monty_async(runner, **run_kwargs)
-            self._event("validate-output")
-            return self._validate_output(result)
-        except ValidationError as exc:
-            output_name = self.output_model.__name__ if self.output_model else "OutputModel"
-            raise GrailOutputValidationError(
-                format_validation_error(
-                    f"Output validation failed for {output_name}",
-                    exc,
-                )
-            ) from exc
-        except MontyRuntimeError as exc:
-            location = extract_location(exc)
-            message = format_runtime_error(
-                category="Monty runtime error", exc=exc, location=location
-            )
-            if "limit" in str(exc).lower() or "recursion" in str(exc).lower():
-                raise GrailLimitError(message) from exc
-            raise GrailExecutionError(message) from exc
-        except MontyError as exc:
-            location = extract_location(exc)
-            message = format_runtime_error(
-                category="Monty execution failed", exc=exc, location=location
-            )
-            raise GrailExecutionError(message) from exc
+            return self._validated_output_with_event(result)
+        except Exception as exc:  # noqa: BLE001
+            raise self._normalize_monty_exception(exc) from exc
         finally:
-            self._debug_payload["stdout"] = out.getvalue()
-            self._debug_payload["stderr"] = err.getvalue()
+            self._debug_payload["stdout"] += out.getvalue()
+            self._debug_payload["stderr"] += err.getvalue()
             self._event("finished")
+
+    async def start(self, code: str, inputs: InputT | dict[str, Any]) -> MontySnapshot:
+        """Validate input data and begin execution in resumable mode."""
+        self._debug_payload = {"events": [], "stdout": "", "stderr": "", "tool_calls": []}
+        self._event("validate-inputs")
+        validated_inputs = self._validate_inputs(inputs)
+        serialized_inputs = validated_inputs.model_dump(mode="python")
+        type_stubs = self.stub_generator.generate(
+            input_model=self.input_model,
+            output_model=self.output_model,
+            tools=[self.tools.as_mapping()[name] for name in self.tools.names],
+        )
+
+        from pydantic_monty import Monty
+
+        monty_kwargs = self._supported_kwargs(
+            Monty,
+            {
+                "inputs": ["inputs"],
+                "type_definitions": type_stubs,
+                "type_check_stubs": type_stubs,
+                "stubs": type_stubs,
+            },
+            drop_required=("code",),
+        )
+
+        start_kwargs = self._supported_kwargs(
+            Monty.start,
+            {
+                "inputs": {"inputs": serialized_inputs},
+                "limits": self.limits,
+                "tools": self._debug_tools_mapping(),
+                "external_functions": self._debug_tools_mapping(),
+                "functions": self._debug_tools_mapping(),
+                "globals": self._debug_tools_mapping(),
+                "print_callback": self._print_callback,
+            },
+            drop_required=("self",),
+        )
+        try:
+            self._event("build-runner")
+            runner = Monty(code, **monty_kwargs)
+            return await self._run_start(runner, start_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            raise self._normalize_monty_exception(exc) from exc
+
+    def load_snapshot(self, serialized: bytes, **kwargs: Any) -> MontySnapshot:
+        """Restore a paused snapshot in this context from a serialized payload."""
+        from pydantic_monty import MontySnapshot as NativeMontySnapshot
+
+        load_kwargs = self._supported_kwargs(
+            NativeMontySnapshot.load,
+            {
+                "print_callback": self._print_callback,
+                **kwargs,
+            },
+            drop_required=(),
+        )
+        try:
+            snapshot = NativeMontySnapshot.load(serialized, **load_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            raise self._normalize_monty_exception(exc) from exc
+
+        self._event("restore-snapshot")
+        return MontySnapshot(
+            snapshot,
+            validate_output=self._validated_output_with_event,
+            normalize_exception=self._normalize_monty_exception,
+        )
 
     def execute(self, code: str, inputs: InputT | dict[str, Any]) -> Any | OutputT:
         """Synchronous wrapper around :meth:`execute_async`."""
@@ -173,6 +222,76 @@ class MontyContext(Generic[InputT, OutputT]):
         if self.output_model is None:
             return output
         return self.output_model.model_validate(output)
+
+    async def _run_start(self, runner: Any, start_kwargs: dict[str, Any]) -> MontySnapshot:
+        out = io.StringIO()
+        err = io.StringIO()
+        self._event("execute")
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                state = runner.start(**start_kwargs)
+                if inspect.isawaitable(state):
+                    state = await state
+        finally:
+            self._debug_payload["stdout"] += out.getvalue()
+            self._debug_payload["stderr"] += err.getvalue()
+            self._event("finished")
+
+        return MontySnapshot(
+            state,
+            validate_output=self._validated_output_with_event,
+            normalize_exception=self._normalize_monty_exception,
+        )
+
+    def _validated_output_with_event(self, output: Any) -> Any | OutputT:
+        self._event("validate-output")
+        try:
+            return self._validate_output(output)
+        except ValidationError as exc:
+            output_name = self.output_model.__name__ if self.output_model else "OutputModel"
+            raise GrailOutputValidationError(
+                format_validation_error(
+                    f"Output validation failed for {output_name}",
+                    exc,
+                )
+            ) from exc
+
+    def _normalize_monty_exception(self, exc: Exception) -> Exception:
+        from pydantic_monty import MontyError, MontyRuntimeError
+
+        if isinstance(exc, ValidationError):
+            output_name = self.output_model.__name__ if self.output_model else "OutputModel"
+            return GrailOutputValidationError(
+                format_validation_error(
+                    f"Output validation failed for {output_name}",
+                    exc,
+                )
+            )
+        if isinstance(exc, MontyRuntimeError):
+            location = extract_location(exc)
+            message = format_runtime_error(
+                category="Monty runtime error",
+                exc=exc,
+                location=location,
+            )
+            if "limit" in str(exc).lower() or "recursion" in str(exc).lower():
+                return GrailLimitError(message)
+            return GrailExecutionError(message)
+        if isinstance(exc, MontyError):
+            location = extract_location(exc)
+            message = format_runtime_error(
+                category="Monty execution failed",
+                exc=exc,
+                location=location,
+            )
+            return GrailExecutionError(message)
+        return exc
+
+    def _print_callback(self, stream: str, text: str) -> None:
+        if stream == "stdout":
+            self._debug_payload["stdout"] += text
+        elif stream == "stderr":
+            self._debug_payload["stderr"] += text
 
     def _supported_kwargs(
         self,

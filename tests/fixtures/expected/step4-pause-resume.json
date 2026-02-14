@@ -1,0 +1,13 @@
+{
+  "paused": {
+    "function_name": "add",
+    "args": [
+      4,
+      5
+    ],
+    "kwargs": {}
+  },
+  "result": {
+    "total": 9
+  }
+}
