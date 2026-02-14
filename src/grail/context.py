@@ -20,10 +20,12 @@ from .errors import (
     format_runtime_error,
     format_validation_error,
 )
+from .policies import PolicySpec, resolve_effective_limits
+from .resource_guard import ResourceGuard, ResourceUsageMetrics
 from .snapshots import MontySnapshot
 from .stubs import StubGenerator
 from .tools import ToolRegistry
-from .types import ResourceLimits, merge_resource_limits
+from .types import ResourceLimits
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -41,6 +43,7 @@ class DebugPayload(TypedDict):
     stdout: str
     stderr: str
     tool_calls: list[DebugToolCall]
+    resource_metrics: dict[str, Any]
 
 
 class MontyContext(Generic[InputT, OutputT]):
@@ -50,6 +53,8 @@ class MontyContext(Generic[InputT, OutputT]):
         self,
         input_model: type[InputT],
         limits: ResourceLimits | None = None,
+        guard: ResourceGuard | dict[str, Any] | None = None,
+        policy: PolicySpec | list[PolicySpec] | tuple[PolicySpec, ...] | None = None,
         output_model: type[OutputT] | None = None,
         tools: list[Callable[..., Any]] | None = None,
         filesystem: Any | None = None,
@@ -57,16 +62,18 @@ class MontyContext(Generic[InputT, OutputT]):
     ) -> None:
         self.input_model = input_model
         self.output_model = output_model
-        self.limits = merge_resource_limits(limits)
+        self.limits = resolve_effective_limits(limits=limits, guard=guard, policy=policy)
         self.tools = ToolRegistry(tools)
         self.filesystem = filesystem
         self.stub_generator = StubGenerator()
         self.debug = debug
+        self.resource_metrics = ResourceUsageMetrics()
         self._debug_payload: DebugPayload = {
             "events": [],
             "stdout": "",
             "stderr": "",
             "tool_calls": [],
+            "resource_metrics": self.resource_metrics.model_dump(exclude_none=True),
         }
 
     @property
@@ -75,7 +82,13 @@ class MontyContext(Generic[InputT, OutputT]):
 
     async def execute_async(self, code: str, inputs: InputT | dict[str, Any]) -> Any | OutputT:
         """Validate input data and execute code in Monty."""
-        self._debug_payload = {"events": [], "stdout": "", "stderr": "", "tool_calls": []}
+        self._debug_payload = {
+            "events": [],
+            "stdout": "",
+            "stderr": "",
+            "tool_calls": [],
+            "resource_metrics": {},
+        }
         self._event("validate-inputs")
         validated_inputs = self._validate_inputs(inputs)
         serialized_inputs = validated_inputs.model_dump(mode="python")
@@ -122,6 +135,7 @@ class MontyContext(Generic[InputT, OutputT]):
             self._event("execute")
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 result = await run_monty_async(runner, **run_kwargs)
+            self._capture_resource_metrics(result)
             return self._validated_output_with_event(result)
         except Exception as exc:  # noqa: BLE001
             raise self._normalize_monty_exception(exc) from exc
@@ -132,7 +146,13 @@ class MontyContext(Generic[InputT, OutputT]):
 
     async def start(self, code: str, inputs: InputT | dict[str, Any]) -> MontySnapshot:
         """Validate input data and begin execution in resumable mode."""
-        self._debug_payload = {"events": [], "stdout": "", "stderr": "", "tool_calls": []}
+        self._debug_payload = {
+            "events": [],
+            "stdout": "",
+            "stderr": "",
+            "tool_calls": [],
+            "resource_metrics": {},
+        }
         self._event("validate-inputs")
         validated_inputs = self._validate_inputs(inputs)
         serialized_inputs = validated_inputs.model_dump(mode="python")
@@ -283,6 +303,10 @@ class MontyContext(Generic[InputT, OutputT]):
                 location=location,
             )
             if "limit" in str(exc).lower() or "recursion" in str(exc).lower():
+                self.resource_metrics.exceeded.append("runtime_limit")
+                self._debug_payload["resource_metrics"] = self.resource_metrics.model_dump(
+                    exclude_none=True
+                )
                 return GrailLimitError(message)
             return GrailExecutionError(message)
         if isinstance(exc, PermissionError):
@@ -330,6 +354,23 @@ class MontyContext(Generic[InputT, OutputT]):
     def _event(self, value: str) -> None:
         if self.debug:
             self._debug_payload["events"].append(value)
+
+    def _capture_resource_metrics(self, result: Any) -> None:
+        payload = None
+        if isinstance(result, dict) and "resource_metrics" in result:
+            payload = result["resource_metrics"]
+        elif hasattr(result, "resource_metrics"):
+            payload = getattr(result, "resource_metrics")
+        elif hasattr(result, "metrics"):
+            payload = getattr(result, "metrics")
+
+        if payload is None:
+            self.resource_metrics = ResourceUsageMetrics()
+        else:
+            self.resource_metrics = ResourceUsageMetrics.from_runtime_payload(payload)
+        self._debug_payload["resource_metrics"] = self.resource_metrics.model_dump(
+            exclude_none=True
+        )
 
     def _debug_tools_mapping(self) -> dict[str, Callable[..., Any]]:
         tools = self.tools.as_mapping()

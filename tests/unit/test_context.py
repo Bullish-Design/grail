@@ -13,6 +13,7 @@ from grail.context import (
     GrailValidationError,
     MontyContext,
 )
+from grail.resource_guard import ResourceGuard
 from grail.types import merge_resource_limits
 
 
@@ -70,6 +71,23 @@ def test_execute_limit_failure_maps_limit_error() -> None:
             ),
             {"name": "alice", "count": 2},
         )
+
+
+@pytest.mark.unit
+def test_context_accepts_guard_object_for_limit_resolution() -> None:
+    ctx = MontyContext(UserInput, guard=ResourceGuard(max_duration_secs=0.25))
+    assert ctx.limits["max_duration_secs"] == 0.25
+
+
+@pytest.mark.unit
+def test_context_preserves_limits_precedence_over_guard_and_policy() -> None:
+    ctx = MontyContext(
+        UserInput,
+        policy="strict",
+        guard=ResourceGuard(max_duration_secs=0.4),
+        limits={"max_duration_secs": 2.0},
+    )
+    assert ctx.limits["max_duration_secs"] == 2.0
 
 
 @pytest.mark.unit
