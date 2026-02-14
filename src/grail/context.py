@@ -375,6 +375,7 @@ class MontyContext(Generic[InputT, OutputT]):
             self._append_debug_stream("stderr", text)
 
     def _coerce_external_functions(self, kwargs: dict[str, Any]) -> None:
+        """Convert mapping-style ``external_functions`` to names for older Monty APIs."""
         value = kwargs.get("external_functions")
         if isinstance(value, dict):
             kwargs["external_functions"] = list(value.keys())
@@ -385,6 +386,7 @@ class MontyContext(Generic[InputT, OutputT]):
         candidates: dict[str, Any],
         drop_required: tuple[str, ...],
     ) -> dict[str, Any]:
+        """Filter ``candidates`` by signature unless ``**kwargs`` is accepted, then drop ``drop_required`` names."""
         signature = inspect.signature(callable_obj)
         parameters = signature.parameters
 
