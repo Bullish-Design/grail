@@ -1,0 +1,4 @@
+{
+  "code": "inputs['a'] + inputs['b']",
+  "inputs": {"a": 4, "b": 6}
+}
