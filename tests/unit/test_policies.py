@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from grail.policies import (
+    PolicySpec,
     NAMED_POLICIES,
     PolicyValidationError,
     ResourcePolicy,
@@ -90,3 +91,32 @@ def test_policy_inherits_unknown_parent_raises() -> None:
     bad = ResourcePolicy(name="bad", guard=ResourceGuard(), inherits=("missing",))
     with pytest.raises(PolicyValidationError, match="unknown policy"):
         resolve_policy(bad)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("policy_specs", "expected"),
+    [
+        (["strict", "permissive"], {"max_duration_secs": 0.5, "max_memory": 8 * 1024 * 1024}),
+        (["ai_agent", "permissive"], {"max_duration_secs": 0.5, "max_memory": 8 * 1024 * 1024}),
+        (
+            [
+                ResourcePolicy(name="tight-recursion", guard=ResourceGuard(max_recursion_depth=80)),
+                "strict",
+            ],
+            {"max_recursion_depth": 80, "max_memory": 8 * 1024 * 1024},
+        ),
+    ],
+)
+def test_policy_composition_matrix(policy_specs: list[PolicySpec], expected: dict[str, int | float]) -> None:
+    resolved = resolve_policy(policy_specs)
+    assert resolved is not None
+    payload = resolved.to_monty_limits()
+    for key, value in expected.items():
+        assert payload[key] == value
+
+
+@pytest.mark.unit
+def test_inline_registered_policy_conflict_raises() -> None:
+    with pytest.raises(PolicyValidationError, match="Conflicting"):
+        resolve_policy(ResourcePolicy(name="strict", guard=ResourceGuard(max_duration_secs=9.0)))

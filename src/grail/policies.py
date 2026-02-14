@@ -100,6 +100,12 @@ class _PolicyResolver:
 
     def _to_policy(self, spec: PolicySpec) -> ResourcePolicy:
         if isinstance(spec, ResourcePolicy):
+            known = self._policies.get(spec.name)
+            if known is not None and known != spec:
+                raise PolicyValidationError(
+                    "Conflicting policy definitions for "
+                    f"'{spec.name}': inline definition does not match registered preset"
+                )
             return spec
         if isinstance(spec, str):
             if spec not in self._policies:
@@ -134,6 +140,21 @@ def resolve_policy(
 
     resolver = _PolicyResolver(available_policies or NAMED_POLICIES)
     specs = [policy] if not isinstance(policy, (list, tuple)) else list(policy)
+
+    names = [item.name for item in specs if isinstance(item, ResourcePolicy)]
+    conflicting_names = [
+        name
+        for name in names
+        if name in (available_policies or NAMED_POLICIES)
+        and (available_policies or NAMED_POLICIES)[name]
+        != next(item for item in specs if isinstance(item, ResourcePolicy) and item.name == name)
+    ]
+    if conflicting_names:
+        raise PolicyValidationError(
+            "Conflicting inline/registered policy definitions for: "
+            + ", ".join(sorted(set(conflicting_names)))
+        )
+
     resolved = [resolver.resolve(spec) for spec in specs]
     return compose_guards(resolved)
 

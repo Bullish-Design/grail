@@ -80,6 +80,16 @@ def test_context_accepts_guard_object_for_limit_resolution() -> None:
 
 
 @pytest.mark.unit
+def test_context_accepts_policy_object_and_guard_dict() -> None:
+    ctx = MontyContext(
+        UserInput,
+        policy="strict",
+        guard={"max_duration_secs": 0.3},
+    )
+    assert ctx.limits["max_duration_secs"] == 0.3
+    assert ctx.limits["max_memory"] == 8 * 1024 * 1024
+
+@pytest.mark.unit
 def test_context_preserves_limits_precedence_over_guard_and_policy() -> None:
     ctx = MontyContext(
         UserInput,
