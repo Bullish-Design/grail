@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import inspect
 import io
 from collections.abc import Callable
@@ -363,7 +364,7 @@ class MontyContext(Generic[InputT, OutputT]):
             return GrailExecutionError(message)
         if isinstance(exc, PermissionError):
             return GrailExecutionError(f"Monty filesystem permission denied: {exc}")
-        if isinstance(exc, OSError) and getattr(exc, "errno", None) == 13:
+        if isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.EACCES:
             return GrailExecutionError(f"Monty filesystem permission denied: {exc}")
         if isinstance(exc, MontyError):
             location = extract_location(exc)
