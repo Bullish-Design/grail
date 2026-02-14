@@ -1,0 +1,17 @@
+{
+  "events": [
+    "validate-inputs",
+    "build-runner",
+    "execute",
+    "validate-output",
+    "finished"
+  ],
+  "stdout_fragment": "hello",
+  "stderr": "",
+  "tool_call": {
+    "name": "add",
+    "args": [2, 4],
+    "kwargs": {},
+    "result": 6
+  }
+}
