@@ -1,3 +1,0 @@
-{
-  "error": "Monty filesystem permission denied: Path escapes filesystem root: /../secret.txt"
-}

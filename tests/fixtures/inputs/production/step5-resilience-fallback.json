@@ -1,6 +1,0 @@
-{
-  "code": "raise",
-  "inputs": {"value": 1},
-  "retry_policy": {"attempts": 2, "backoff_seconds": 0.0},
-  "fallback": {"total": -1}
-}

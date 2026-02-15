@@ -1,6 +1,0 @@
-{
-  "result": {"total": 9},
-  "tool_calls": [
-    {"args": [4, 5], "kwargs": {}, "name": "add"}
-  ]
-}

@@ -1,4 +1,0 @@
-{
-  "code": "inputs['user']['name'].upper()",
-  "inputs": {"user": {"name": "alice"}}
-}

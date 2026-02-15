@@ -1,8 +1,0 @@
-{
-  "scenarios": {
-    "memory_overhead_bytes": 17,
-    "snapshot_roundtrip_ms": 0.028872000257251784,
-    "startup_ms": 0.0,
-    "stub_generation_ms": 0.060819000282208435
-  }
-}

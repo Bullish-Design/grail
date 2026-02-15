@@ -1,7 +1,0 @@
-{
-  "code": "{'total': add(inputs['a'], inputs['b'])}",
-  "inputs": {
-    "a": 4,
-    "b": 5
-  }
-}
