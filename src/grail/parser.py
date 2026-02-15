@@ -86,7 +86,7 @@ def validate_external_function(
     Requirements:
         - Complete type annotations on all parameters
         - Return type annotation
-        - Body is single Ellipsis statement
+        - Body is single Ellipsis statement (optionally preceded by docstring)
 
     Args:
         func_node: Function definition to validate.
@@ -100,13 +100,23 @@ def validate_external_function(
             lineno=func_node.lineno,
         )
 
-    if len(func_node.body) != 1:
+    # Skip optional docstring (first statement if it's a string constant)
+    body_start_idx = 0
+    if (len(func_node.body) > 0 and
+        isinstance(func_node.body[0], ast.Expr) and
+        isinstance(func_node.body[0].value, ast.Constant) and
+        isinstance(func_node.body[0].value.value, str)):
+        body_start_idx = 1
+
+    remaining_body = func_node.body[body_start_idx:]
+
+    if len(remaining_body) != 1:
         raise CheckError(
             f"External function '{func_node.name}' body must be single '...' (Ellipsis)",
             lineno=func_node.lineno,
         )
 
-    body_stmt = func_node.body[0]
+    body_stmt = remaining_body[0]
 
     if not isinstance(body_stmt, ast.Expr):
         raise CheckError(
@@ -187,55 +197,71 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
     inputs: dict[str, InputSpec] = {}
 
     for node in ast.walk(module):
-        if not isinstance(node, ast.AnnAssign):
-            continue
+        # Check annotated assignments (x: int = Input("x"))
+        if isinstance(node, ast.AnnAssign):
+            if not isinstance(node.value, ast.Call):
+                continue
 
-        if not isinstance(node.value, ast.Call):
-            continue
+            is_input_call = False
+            if isinstance(node.value.func, ast.Name) and node.value.func.id == "Input":
+                is_input_call = True
+            elif isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "Input":
+                is_input_call = True
 
-        is_input_call = False
-        if isinstance(node.value.func, ast.Name) and node.value.func.id == "Input":
-            is_input_call = True
-        elif isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "Input":
-            is_input_call = True
+            if not is_input_call:
+                continue
 
-        if not is_input_call:
-            continue
+            if node.annotation is None:
+                raise CheckError("Input() call must have type annotation", lineno=node.lineno)
 
-        if node.annotation is None:
-            raise CheckError("Input() call must have type annotation", lineno=node.lineno)
+            if not isinstance(node.target, ast.Name):
+                raise CheckError(
+                    "Input() must be assigned to a simple variable name",
+                    lineno=node.lineno,
+                )
 
-        if not isinstance(node.target, ast.Name):
-            raise CheckError(
-                "Input() must be assigned to a simple variable name",
+            var_name = node.target.id
+
+            if not node.value.args:
+                raise CheckError(
+                    f"Input() call for '{var_name}' missing name argument",
+                    lineno=node.lineno,
+                )
+
+            default = None
+            for keyword in node.value.keywords:
+                if keyword.arg == "default":
+                    try:
+                        default = ast.literal_eval(keyword.value)
+                    except (ValueError, TypeError):
+                        default = ast.unparse(keyword.value)
+                    break
+
+            inputs[var_name] = InputSpec(
+                name=var_name,
+                type_annotation=get_type_annotation_str(node.annotation),
+                default=default,
+                required=default is None,
                 lineno=node.lineno,
+                col_offset=node.col_offset,
             )
 
-        var_name = node.target.id
+        # Check non-annotated assignments (x = Input("x")) and raise error
+        elif isinstance(node, ast.Assign):
+            if not isinstance(node.value, ast.Call):
+                continue
 
-        if not node.value.args:
-            raise CheckError(
-                f"Input() call for '{var_name}' missing name argument",
-                lineno=node.lineno,
-            )
+            is_input_call = False
+            if isinstance(node.value.func, ast.Name) and node.value.func.id == "Input":
+                is_input_call = True
+            elif isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "Input":
+                is_input_call = True
 
-        default = None
-        for keyword in node.value.keywords:
-            if keyword.arg == "default":
-                try:
-                    default = ast.literal_eval(keyword.value)
-                except (ValueError, TypeError):
-                    default = ast.unparse(keyword.value)
-                break
-
-        inputs[var_name] = InputSpec(
-            name=var_name,
-            type_annotation=get_type_annotation_str(node.annotation),
-            default=default,
-            required=default is None,
-            lineno=node.lineno,
-            col_offset=node.col_offset,
-        )
+            if is_input_call:
+                raise CheckError(
+                    "Input() call must have type annotation",
+                    lineno=node.lineno,
+                )
 
     return inputs
 
