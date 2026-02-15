@@ -12,6 +12,7 @@ from grail.errors import (
     OutputError,
     ParseError,
 )
+from grail.parser import parse_pym_content, parse_pym_file
 
 __all__ = [
     "external",
@@ -24,4 +25,6 @@ __all__ = [
     "ExecutionError",
     "LimitError",
     "OutputError",
+    "parse_pym_content",
+    "parse_pym_file",
 ]
