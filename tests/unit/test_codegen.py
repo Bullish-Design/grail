@@ -84,7 +84,7 @@ final = result * 2
     # Check executable code is preserved
     assert "result = await process(x)" in monty_code
     assert "final = result * 2" in monty_code
-    assert '"value": final' in monty_code
+    assert "'value': final" in monty_code
 
 
 def test_source_map_created():
