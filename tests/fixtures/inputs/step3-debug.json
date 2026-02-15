@@ -1,7 +1,0 @@
-{
-  "code": "print('hello')\nadd(inputs['a'], inputs['b'])",
-  "inputs": {
-    "a": 2,
-    "b": 4
-  }
-}

@@ -1,4 +1,0 @@
-{
-  "code": "{'result': inputs['value'] * 2}",
-  "inputs": {"value": 7}
-}

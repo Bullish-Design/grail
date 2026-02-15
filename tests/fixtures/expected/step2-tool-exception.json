@@ -1,6 +1,0 @@
-{
-  "error_type": "GrailExecutionError",
-  "tool_calls": [
-    {"args": [1, 2], "kwargs": {}, "name": "fail_tool"}
-  ]
-}

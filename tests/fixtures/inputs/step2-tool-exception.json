@@ -1,8 +1,0 @@
-{
-  "code": "{'total': fail_tool(inputs['a'], inputs['b'])}",
-  "expected_error": "GrailExecutionError",
-  "inputs": {"a": 1, "b": 2},
-  "tool_calls": [
-    {"args": [1, 2], "kwargs": {}, "name": "fail_tool"}
-  ]
-}

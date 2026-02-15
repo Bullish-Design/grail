@@ -1,4 +1,0 @@
-{
-  "code": "inputs['value']",
-  "inputs": {"value": "not-an-int"}
-}
