@@ -6,13 +6,13 @@ build-backend = "hatchling.build"
 name = "grail"
 version = "0.1.0"
 description = "Pydantic-native wrapper around Monty for secure Python execution."
-readme = "CONCEPT.md"
+readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
 authors = [{ name = "Grail Contributors" }]
 dependencies = [
   "pydantic>=2.12.5",
-  "pydantic_monty",
+  "pydantic-monty",
 ]
 
 [project.optional-dependencies]
@@ -31,12 +31,13 @@ include = [
   "src",
   "tests",
   "pyproject.toml",
-  "CONCEPT.md",
+  "README.md",
   "SPEC.md",
   "ARCHITECTURE.md",
 ]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 addopts = "-q"
 testpaths = ["tests"]
 pythonpath = ["src"]
