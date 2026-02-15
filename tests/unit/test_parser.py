@@ -52,7 +52,7 @@ from grail import external
 def bad_func(x):
     ...
 """
-    with pytest.raises(CheckError, match="missing type annotation"):
+    with pytest.raises(CheckError, match="missing return type annotation"):
         parse_pym_content(content)
 
 
