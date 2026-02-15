@@ -2689,3 +2689,1971 @@ You now have:
 - Step 16: Final Validation - Ship it!
 
 The foundation is solid. The next steps will tie everything together into the complete grail library.
+
+---
+
+## Step 11: GrailScript Class - The Main API
+
+**Purpose**: Implement the main `GrailScript` class that ties together parsing, checking, code generation, and Monty execution.
+
+### Work to be done
+
+Create `src/grail/script.py`:
+
+```python
+"""GrailScript - Main API for loading and executing .pym files."""
+import asyncio
+from pathlib import Path
+from typing import Any, Callable
+import time
+
+try:
+    import pydantic_monty
+except ImportError:
+    pydantic_monty = None
+
+from grail._types import ExternalSpec, InputSpec, CheckResult, SourceMap
+from grail.parser import parse_pym_file
+from grail.checker import check_pym
+from grail.stubs import generate_stubs
+from grail.codegen import generate_monty_code
+from grail.artifacts import ArtifactsManager
+from grail.limits import merge_limits, parse_limits
+from grail.errors import (
+    InputError, ExternalError, ExecutionError,
+    LimitError, OutputError
+)
+
+
+class GrailScript:
+    """
+    Main interface for loading and executing .pym files.
+
+    This class encapsulates:
+    - Parsed .pym file metadata
+    - Generated Monty code and stubs
+    - Validation results
+    - Execution interface
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        externals: dict[str, ExternalSpec],
+        inputs: dict[str, InputSpec],
+        monty_code: str,
+        stubs: str,
+        source_map: SourceMap,
+        limits: dict[str, Any] | None = None,
+        files: dict[str, str | bytes] | None = None,
+        grail_dir: Path | None = None,
+    ):
+        """
+        Initialize GrailScript.
+
+        Args:
+            path: Path to original .pym file
+            externals: External function specifications
+            inputs: Input specifications
+            monty_code: Generated Monty code
+            stubs: Generated type stubs
+            source_map: Line number mapping
+            limits: Resource limits
+            files: Virtual filesystem files
+            grail_dir: Directory for artifacts (None disables)
+        """
+        self.path = path
+        self.name = path.stem
+        self.externals = externals
+        self.inputs = inputs
+        self.monty_code = monty_code
+        self.stubs = stubs
+        self.source_map = source_map
+        self.limits = limits
+        self.files = files
+        self.grail_dir = grail_dir
+
+        # Initialize artifacts manager if grail_dir is set
+        self._artifacts = ArtifactsManager(grail_dir) if grail_dir else None
+
+    def check(self) -> CheckResult:
+        """
+        Run validation checks on the script.
+
+        Returns:
+            CheckResult with errors, warnings, and info
+        """
+        # Re-parse and check
+        parse_result = parse_pym_file(self.path)
+        check_result = check_pym(parse_result)
+        check_result.file = str(self.path)
+
+        # Write check results to artifacts if enabled
+        if self._artifacts:
+            self._artifacts.write_script_artifacts(
+                self.name,
+                self.stubs,
+                self.monty_code,
+                check_result,
+                self.externals,
+                self.inputs
+            )
+
+        return check_result
+
+    def _validate_inputs(self, inputs: dict[str, Any]) -> None:
+        """
+        Validate that provided inputs match declarations.
+
+        Args:
+            inputs: Runtime input values
+
+        Raises:
+            InputError: If validation fails
+        """
+        # Check for missing required inputs
+        for name, spec in self.inputs.items():
+            if spec.required and name not in inputs:
+                raise InputError(
+                    f"Missing required input: '{name}' (type: {spec.type_annotation})",
+                    input_name=name
+                )
+
+        # Check for extra inputs (warn but don't fail)
+        for name in inputs:
+            if name not in self.inputs:
+                print(f"Warning: Extra input '{name}' not declared in script")
+
+    def _validate_externals(self, externals: dict[str, Callable]) -> None:
+        """
+        Validate that provided externals match declarations.
+
+        Args:
+            externals: Runtime external function implementations
+
+        Raises:
+            ExternalError: If validation fails
+        """
+        # Check for missing externals
+        for name in self.externals:
+            if name not in externals:
+                raise ExternalError(
+                    f"Missing external function: '{name}'",
+                    function_name=name
+                )
+
+        # Check for extra externals (warn but don't fail)
+        for name in externals:
+            if name not in self.externals:
+                print(f"Warning: Extra external '{name}' not declared in script")
+
+    def _prepare_monty_limits(self, override_limits: dict[str, Any] | None) -> dict[str, Any]:
+        """
+        Merge and parse limits for Monty.
+
+        Args:
+            override_limits: Runtime limit overrides
+
+        Returns:
+            Parsed limits dict ready for Monty
+        """
+        return merge_limits(self.limits, override_limits)
+
+    def _prepare_monty_files(self, override_files: dict[str, str | bytes] | None):
+        """
+        Prepare files for Monty's OSAccess.
+
+        Args:
+            override_files: Runtime file overrides
+
+        Returns:
+            OSAccess object or None
+        """
+        if pydantic_monty is None:
+            return None
+
+        files = override_files if override_files is not None else self.files
+        if not files:
+            return None
+
+        # Convert dict to Monty's MemoryFile + OSAccess
+        memory_files = []
+        for path, content in files.items():
+            memory_files.append(pydantic_monty.MemoryFile(path, content=content))
+
+        return pydantic_monty.OSAccess(memory_files)
+
+    def _map_error_to_pym(self, error: Exception) -> ExecutionError:
+        """
+        Map Monty error to .pym file line numbers.
+
+        Args:
+            error: Original error from Monty
+
+        Returns:
+            ExecutionError with mapped line numbers
+        """
+        # Extract error message
+        error_msg = str(error)
+
+        # Try to extract line number from Monty error
+        # (This is simplified - real implementation would parse Monty's traceback)
+        lineno = None
+
+        # Check if it's a limit error
+        if "memory" in error_msg.lower() or "limit" in error_msg.lower():
+            return LimitError(error_msg)
+
+        return ExecutionError(
+            error_msg,
+            lineno=lineno,
+            source_context=None,
+            suggestion=None
+        )
+
+    async def run(
+        self,
+        inputs: dict[str, Any] | None = None,
+        externals: dict[str, Callable] | None = None,
+        output_model: type | None = None,
+        files: dict[str, str | bytes] | None = None,
+        limits: dict[str, Any] | None = None,
+    ) -> Any:
+        """
+        Execute the script in Monty.
+
+        Args:
+            inputs: Input values
+            externals: External function implementations
+            output_model: Optional Pydantic model for output validation
+            files: Override files from load()
+            limits: Override limits from load()
+
+        Returns:
+            Result of script execution
+
+        Raises:
+            InputError: Missing or invalid inputs
+            ExternalError: Missing external functions
+            ExecutionError: Monty runtime error
+            OutputError: Output validation failed
+        """
+        if pydantic_monty is None:
+            raise RuntimeError("pydantic-monty not installed")
+
+        inputs = inputs or {}
+        externals = externals or {}
+
+        # Validate inputs and externals
+        self._validate_inputs(inputs)
+        self._validate_externals(externals)
+
+        # Prepare Monty configuration
+        parsed_limits = self._prepare_monty_limits(limits)
+        os_access = self._prepare_monty_files(files)
+
+        # Create Monty instance
+        monty = pydantic_monty.Monty(
+            self.monty_code,
+            type_check=True,
+            type_check_stubs=self.stubs,
+            **parsed_limits
+        )
+
+        # Execute
+        start_time = time.time()
+        try:
+            result = await pydantic_monty.run_monty_async(
+                monty,
+                inputs=inputs,
+                externals=externals,
+                os_access=os_access
+            )
+            success = True
+            error_msg = None
+        except Exception as e:
+            success = False
+            error_msg = str(e)
+            mapped_error = self._map_error_to_pym(e)
+
+            # Write error log
+            if self._artifacts:
+                duration_ms = (time.time() - start_time) * 1000
+                self._artifacts.write_run_log(
+                    self.name,
+                    stdout="",
+                    stderr=str(mapped_error),
+                    duration_ms=duration_ms,
+                    success=False
+                )
+
+            raise mapped_error
+
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Write success log
+        if self._artifacts:
+            self._artifacts.write_run_log(
+                self.name,
+                stdout=f"Result: {result}",
+                stderr="",
+                duration_ms=duration_ms,
+                success=True
+            )
+
+        # Validate output if model provided
+        if output_model is not None:
+            try:
+                result = output_model(**result) if isinstance(result, dict) else output_model(result)
+            except Exception as e:
+                raise OutputError(
+                    f"Output validation failed: {e}",
+                    validation_errors=e
+                )
+
+        return result
+
+    def run_sync(
+        self,
+        inputs: dict[str, Any] | None = None,
+        externals: dict[str, Callable] | None = None,
+        **kwargs
+    ) -> Any:
+        """
+        Synchronous wrapper around run().
+
+        Args:
+            inputs: Input values
+            externals: External function implementations
+            **kwargs: Additional arguments for run()
+
+        Returns:
+            Result of script execution
+        """
+        return asyncio.run(self.run(inputs, externals, **kwargs))
+
+    def start(
+        self,
+        inputs: dict[str, Any] | None = None,
+        externals: dict[str, Callable] | None = None,
+    ):
+        """
+        Begin resumable execution (pause/resume pattern).
+
+        Args:
+            inputs: Input values
+            externals: External function implementations
+
+        Returns:
+            Snapshot object
+        """
+        # Import here to avoid circular dependency
+        from grail.snapshot import Snapshot
+
+        if pydantic_monty is None:
+            raise RuntimeError("pydantic-monty not installed")
+
+        inputs = inputs or {}
+        externals = externals or {}
+
+        # Validate inputs and externals
+        self._validate_inputs(inputs)
+        self._validate_externals(externals)
+
+        # Create Monty instance
+        monty = pydantic_monty.Monty(
+            self.monty_code,
+            type_check=True,
+            type_check_stubs=self.stubs,
+        )
+
+        # Start execution (this will pause on first external call)
+        monty_snapshot = pydantic_monty.start_monty(monty, inputs=inputs)
+
+        return Snapshot(monty_snapshot, self.source_map, externals)
+
+
+def load(
+    path: str | Path,
+    limits: dict[str, Any] | None = None,
+    files: dict[str, str | bytes] | None = None,
+    grail_dir: str | Path | None = ".grail",
+) -> GrailScript:
+    """
+    Load and parse a .pym file.
+
+    Args:
+        path: Path to .pym file
+        limits: Resource limits
+        files: Virtual filesystem files
+        grail_dir: Directory for artifacts (None disables)
+
+    Returns:
+        GrailScript instance
+
+    Raises:
+        FileNotFoundError: If file doesn't exist
+        ParseError: If file has syntax errors
+        CheckError: If declarations are malformed
+    """
+    path = Path(path)
+
+    # Parse the file
+    parse_result = parse_pym_file(path)
+
+    # Run validation checks
+    check_result = check_pym(parse_result)
+    check_result.file = str(path)
+
+    # Generate stubs
+    stubs = generate_stubs(parse_result.externals, parse_result.inputs)
+
+    # Generate Monty code
+    monty_code, source_map = generate_monty_code(parse_result)
+
+    # Setup grail_dir
+    grail_dir_path = Path(grail_dir) if grail_dir else None
+
+    # Write artifacts
+    if grail_dir_path:
+        artifacts = ArtifactsManager(grail_dir_path)
+        artifacts.write_script_artifacts(
+            path.stem,
+            stubs,
+            monty_code,
+            check_result,
+            parse_result.externals,
+            parse_result.inputs
+        )
+
+    return GrailScript(
+        path=path,
+        externals=parse_result.externals,
+        inputs=parse_result.inputs,
+        monty_code=monty_code,
+        stubs=stubs,
+        source_map=source_map,
+        limits=limits,
+        files=files,
+        grail_dir=grail_dir_path,
+    )
+
+
+async def run(code: str, inputs: dict[str, Any] | None = None) -> Any:
+    """
+    Execute inline Monty code (escape hatch for simple cases).
+
+    Args:
+        code: Monty code to execute
+        inputs: Input values
+
+    Returns:
+        Result of code execution
+    """
+    if pydantic_monty is None:
+        raise RuntimeError("pydantic-monty not installed")
+
+    inputs = inputs or {}
+
+    monty = pydantic_monty.Monty(code)
+    result = await pydantic_monty.run_monty_async(monty, inputs=inputs)
+    return result
+```
+
+### Testing/Validation
+
+Create `tests/unit/test_script.py`:
+
+```python
+"""Test GrailScript class."""
+import pytest
+from pathlib import Path
+
+from grail.script import load
+from grail.errors import InputError, ExternalError
+
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
+
+
+def test_load_pym_file():
+    """Should load and parse .pym file."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    assert script.name == "simple"
+    assert "double" in script.externals
+    assert "x" in script.inputs
+    assert len(script.monty_code) > 0
+    assert len(script.stubs) > 0
+
+
+def test_check_returns_result():
+    """Should return CheckResult."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+    result = script.check()
+
+    assert result.valid is True
+    assert result.file == str(FIXTURES_DIR / "simple.pym")
+
+
+def test_validate_inputs_missing_required():
+    """Should raise InputError for missing required input."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    with pytest.raises(InputError, match="Missing required input"):
+        script._validate_inputs({})
+
+
+def test_validate_inputs_extra_input_warns(capsys):
+    """Should warn for extra inputs."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    script._validate_inputs({"x": 1, "extra": 2})
+    captured = capsys.readouterr()
+    assert "Extra input 'extra'" in captured.out
+
+
+def test_validate_externals_missing():
+    """Should raise ExternalError for missing external."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    with pytest.raises(ExternalError, match="Missing external function"):
+        script._validate_externals({})
+
+
+def test_validate_externals_extra_warns(capsys):
+    """Should warn for extra externals."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    script._validate_externals({"double": lambda x: x*2, "extra": lambda: None})
+    captured = capsys.readouterr()
+    assert "Extra external 'extra'" in captured.out
+
+
+@pytest.mark.integration
+async def test_run_simple_script():
+    """Should execute simple script."""
+    pytest.importorskip("pydantic_monty")
+
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    async def double_impl(n: int) -> int:
+        return n * 2
+
+    result = await script.run(
+        inputs={"x": 5},
+        externals={"double": double_impl}
+    )
+
+    assert result == 10
+
+
+@pytest.mark.integration
+def test_run_sync():
+    """Should execute script synchronously."""
+    pytest.importorskip("pydantic_monty")
+
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    async def double_impl(n: int) -> int:
+        return n * 2
+
+    result = script.run_sync(
+        inputs={"x": 5},
+        externals={"double": double_impl}
+    )
+
+    assert result == 10
+
+
+def test_load_with_limits():
+    """Should accept limits parameter."""
+    script = load(
+        FIXTURES_DIR / "simple.pym",
+        limits={"max_memory": "8mb"},
+        grail_dir=None
+    )
+
+    assert script.limits == {"max_memory": "8mb"}
+
+
+def test_load_with_files():
+    """Should accept files parameter."""
+    script = load(
+        FIXTURES_DIR / "simple.pym",
+        files={"/data/test.txt": "content"},
+        grail_dir=None
+    )
+
+    assert script.files == {"/data/test.txt": "content"}
+
+
+def test_load_creates_artifacts(tmp_path):
+    """Should create artifacts in grail_dir."""
+    script = load(
+        FIXTURES_DIR / "simple.pym",
+        grail_dir=tmp_path / ".grail"
+    )
+
+    artifacts_dir = tmp_path / ".grail" / "simple"
+    assert artifacts_dir.exists()
+    assert (artifacts_dir / "stubs.pyi").exists()
+    assert (artifacts_dir / "monty_code.py").exists()
+    assert (artifacts_dir / "check.json").exists()
+```
+
+**Validation checklist**:
+- [ ] `pytest tests/unit/test_script.py` passes
+- [ ] Can load .pym files successfully
+- [ ] Validation works for inputs and externals
+- [ ] Integration tests with Monty pass
+- [ ] Artifacts are created correctly
+- [ ] Limits and files are handled properly
+
+---
+
+## Step 12: CLI Commands
+
+**Purpose**: Implement the command-line interface for grail tooling.
+
+### Work to be done
+
+Create `src/grail/cli.py`:
+
+```python
+"""Command-line interface for grail."""
+import argparse
+import sys
+import json
+from pathlib import Path
+from typing import List
+
+from grail.script import load
+from grail.artifacts import ArtifactsManager
+from grail.limits import DEFAULT
+
+
+def cmd_init(args):
+    """Initialize grail project."""
+    grail_dir = Path(".grail")
+    grail_dir.mkdir(exist_ok=True)
+
+    # Add to .gitignore if it exists
+    gitignore = Path(".gitignore")
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if ".grail/" not in content:
+            with gitignore.open("a") as f:
+                f.write("\n# Grail artifacts\n.grail/\n")
+            print("✓ Added .grail/ to .gitignore")
+
+    # Create sample .pym file
+    sample_pym = Path("example.pym")
+    if not sample_pym.exists():
+        sample_pym.write_text("""from grail import external, Input
+from typing import Any
+
+# Declare inputs
+name: str = Input("name")
+
+# Declare external functions
+@external
+async def greet(name: str) -> str:
+    '''Generate a greeting message.'''
+    ...
+
+# Execute
+message = await greet(name)
+{"greeting": message}
+""")
+        print("✓ Created example.pym")
+
+    print("\n✓ Grail initialized!")
+    print("\nNext steps:")
+    print("  1. Edit example.pym")
+    print("  2. Run: grail check example.pym")
+    print("  3. Create a host file and run: grail run example.pym --host host.py")
+
+
+def cmd_check(args):
+    """Check .pym files for Monty compatibility."""
+    # Find files to check
+    if args.files:
+        files = [Path(f) for f in args.files]
+    else:
+        # Find all .pym files recursively
+        files = list(Path.cwd().rglob("*.pym"))
+
+    if not files:
+        print("No .pym files found")
+        return 1
+
+    results = []
+    for file_path in files:
+        try:
+            script = load(file_path, grail_dir=None)
+            result = script.check()
+            results.append((file_path, result))
+        except Exception as e:
+            print(f"{file_path}: ERROR - {e}")
+            return 1
+
+    # Output results
+    if args.format == "json":
+        # JSON output for CI
+        output = []
+        for file_path, result in results:
+            output.append({
+                "file": str(file_path),
+                "valid": result.valid,
+                "errors": [
+                    {
+                        "line": e.lineno,
+                        "column": e.col_offset,
+                        "code": e.code,
+                        "message": e.message,
+                        "suggestion": e.suggestion
+                    }
+                    for e in result.errors
+                ],
+                "warnings": [
+                    {
+                        "line": w.lineno,
+                        "column": w.col_offset,
+                        "code": w.code,
+                        "message": w.message
+                    }
+                    for w in result.warnings
+                ],
+                "info": result.info
+            })
+        print(json.dumps(output, indent=2))
+    else:
+        # Human-readable output
+        passed = 0
+        failed = 0
+
+        for file_path, result in results:
+            if result.valid and (not args.strict or not result.warnings):
+                print(f"{file_path}: OK ({result.info['externals_count']} externals, "
+                      f"{result.info['inputs_count']} inputs, "
+                      f"{len(result.errors)} errors, {len(result.warnings)} warnings)")
+                passed += 1
+            else:
+                print(f"{file_path}: FAIL")
+                failed += 1
+
+                for error in result.errors:
+                    print(f"  {file_path}:{error.lineno}:{error.col_offset}: "
+                          f"{error.code} {error.message}")
+
+                if args.strict:
+                    for warning in result.warnings:
+                        print(f"  {file_path}:{warning.lineno}:{warning.col_offset}: "
+                              f"{warning.code} {warning.message}")
+
+        print(f"\nChecked {len(files)} files: {passed} passed, {failed} failed")
+
+        if failed > 0:
+            return 1
+
+    return 0
+
+
+def cmd_run(args):
+    """Run a .pym file with a host file."""
+    import asyncio
+    import importlib.util
+
+    # Load the .pym script
+    script_path = Path(args.file)
+    if not script_path.exists():
+        print(f"Error: {script_path} not found")
+        return 1
+
+    # Load host file if provided
+    if args.host:
+        host_path = Path(args.host)
+        if not host_path.exists():
+            print(f"Error: Host file {host_path} not found")
+            return 1
+
+        # Import host module
+        spec = importlib.util.spec_from_file_location("host", host_path)
+        host_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(host_module)
+
+        # Run host's main()
+        if hasattr(host_module, "main"):
+            if asyncio.iscoroutinefunction(host_module.main):
+                asyncio.run(host_module.main())
+            else:
+                host_module.main()
+        else:
+            print("Error: Host file must define a main() function")
+            return 1
+    else:
+        print("Error: --host <host.py> is required")
+        return 1
+
+    return 0
+
+
+def cmd_watch(args):
+    """Watch .pym files and re-run check on changes."""
+    try:
+        import watchfiles
+    except ImportError:
+        print("Error: watchfiles not installed. Install with: pip install watchfiles")
+        return 1
+
+    watch_dir = Path(args.dir) if args.dir else Path.cwd()
+
+    print(f"Watching {watch_dir} for .pym file changes...")
+    print("Press Ctrl+C to stop")
+
+    # Initial check
+    print("\n=== Initial check ===")
+    cmd_check(argparse.Namespace(files=None, format="text", strict=False))
+
+    # Watch for changes
+    for changes in watchfiles.watch(watch_dir, recursive=True):
+        # Filter for .pym files
+        pym_changes = [c for c in changes if c[1].endswith(".pym")]
+        if pym_changes:
+            print(f"\n=== Changes detected ===")
+            cmd_check(argparse.Namespace(files=None, format="text", strict=False))
+
+
+def cmd_clean(args):
+    """Remove .grail/ directory."""
+    grail_dir = Path(".grail")
+
+    if grail_dir.exists():
+        mgr = ArtifactsManager(grail_dir)
+        mgr.clean()
+        print("✓ Removed .grail/")
+    else:
+        print(".grail/ does not exist")
+
+    return 0
+
+
+def main():
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="Grail - Transparent Python for Monty",
+        prog="grail"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # grail init
+    parser_init = subparsers.add_parser("init", help="Initialize grail project")
+    parser_init.set_defaults(func=cmd_init)
+
+    # grail check
+    parser_check = subparsers.add_parser("check", help="Check .pym files")
+    parser_check.add_argument("files", nargs="*", help=".pym files to check")
+    parser_check.add_argument("--format", choices=["text", "json"], default="text",
+                             help="Output format")
+    parser_check.add_argument("--strict", action="store_true",
+                             help="Treat warnings as errors")
+    parser_check.set_defaults(func=cmd_check)
+
+    # grail run
+    parser_run = subparsers.add_parser("run", help="Run a .pym file")
+    parser_run.add_argument("file", help=".pym file to run")
+    parser_run.add_argument("--host", help="Host Python file with main() function")
+    parser_run.set_defaults(func=cmd_run)
+
+    # grail watch
+    parser_watch = subparsers.add_parser("watch", help="Watch and check .pym files")
+    parser_watch.add_argument("dir", nargs="?", help="Directory to watch")
+    parser_watch.set_defaults(func=cmd_watch)
+
+    # grail clean
+    parser_clean = subparsers.add_parser("clean", help="Remove .grail/ directory")
+    parser_clean.set_defaults(func=cmd_clean)
+
+    # Parse and execute
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 0
+
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+Create `setup.py` or update `pyproject.toml` with CLI entry point:
+
+```toml
+[project.scripts]
+grail = "grail.cli:main"
+```
+
+### Testing/Validation
+
+Create `tests/unit/test_cli.py`:
+
+```python
+"""Test CLI commands."""
+import pytest
+from pathlib import Path
+import tempfile
+import os
+
+from grail.cli import cmd_init, cmd_check, cmd_clean
+import argparse
+
+
+def test_cmd_init_creates_directory(tmp_path, monkeypatch):
+    """Should create .grail/ directory."""
+    monkeypatch.chdir(tmp_path)
+
+    args = argparse.Namespace()
+    cmd_init(args)
+
+    assert (tmp_path / ".grail").exists()
+    assert (tmp_path / "example.pym").exists()
+
+
+def test_cmd_check_valid_file(tmp_path, monkeypatch):
+    """Should check valid .pym file."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a valid .pym file
+    pym_file = tmp_path / "test.pym"
+    pym_file.write_text("""
+from grail import external, Input
+
+x: int = Input("x")
+
+@external
+async def double(n: int) -> int:
+    ...
+
+result = await double(x)
+result
+""")
+
+    args = argparse.Namespace(files=["test.pym"], format="text", strict=False)
+    result = cmd_check(args)
+
+    assert result == 0
+
+
+def test_cmd_clean_removes_directory(tmp_path, monkeypatch):
+    """Should remove .grail/ directory."""
+    monkeypatch.chdir(tmp_path)
+
+    grail_dir = tmp_path / ".grail"
+    grail_dir.mkdir()
+    (grail_dir / "test.txt").write_text("test")
+
+    args = argparse.Namespace()
+    cmd_clean(args)
+
+    assert not grail_dir.exists()
+```
+
+**Validation checklist**:
+- [ ] `pytest tests/unit/test_cli.py` passes
+- [ ] `grail init` creates project structure
+- [ ] `grail check` validates .pym files
+- [ ] `grail clean` removes artifacts
+- [ ] CLI commands work from terminal
+
+---
+
+## Step 13: Snapshot - Pause/Resume Wrapper
+
+**Purpose**: Thin wrapper over Monty's snapshot mechanism for pause/resume execution.
+
+### Work to be done
+
+Create `src/grail/snapshot.py`:
+
+```python
+"""Snapshot wrapper for pause/resume execution."""
+from typing import Any, Callable
+
+try:
+    import pydantic_monty
+except ImportError:
+    pydantic_monty = None
+
+from grail._types import SourceMap
+
+
+class Snapshot:
+    """
+    Wrapper around Monty's snapshot for pause/resume execution.
+
+    Allows inspecting external function calls and resuming with results.
+    """
+
+    def __init__(
+        self,
+        monty_snapshot: Any,
+        source_map: SourceMap,
+        externals: dict[str, Callable]
+    ):
+        """
+        Initialize snapshot wrapper.
+
+        Args:
+            monty_snapshot: Underlying Monty snapshot
+            source_map: Line number mapping
+            externals: External function implementations
+        """
+        self._monty_snapshot = monty_snapshot
+        self._source_map = source_map
+        self._externals = externals
+
+    @property
+    def function_name(self) -> str:
+        """Name of the external function being called."""
+        return self._monty_snapshot.function_name
+
+    @property
+    def args(self) -> tuple[Any, ...]:
+        """Positional arguments for the function call."""
+        return self._monty_snapshot.args
+
+    @property
+    def kwargs(self) -> dict[str, Any]:
+        """Keyword arguments for the function call."""
+        return self._monty_snapshot.kwargs
+
+    @property
+    def is_complete(self) -> bool:
+        """Whether execution has finished."""
+        return self._monty_snapshot.is_complete
+
+    @property
+    def call_id(self) -> int:
+        """Unique identifier for this external call."""
+        return getattr(self._monty_snapshot, "call_id", 0)
+
+    @property
+    def value(self) -> Any:
+        """
+        Final result value (only available when is_complete=True).
+
+        Returns:
+            Final script result
+
+        Raises:
+            RuntimeError: If execution not complete
+        """
+        if not self.is_complete:
+            raise RuntimeError("Execution not complete")
+        return self._monty_snapshot.value
+
+    def resume(
+        self,
+        return_value: Any = None,
+        exception: BaseException | None = None
+    ) -> "Snapshot":
+        """
+        Resume execution with a return value or exception.
+
+        Args:
+            return_value: Value to return from external function
+            exception: Exception to raise in Monty
+
+        Returns:
+            New Snapshot if more calls pending, or final result
+        """
+        if exception is not None:
+            next_snapshot = self._monty_snapshot.resume(exception=exception)
+        else:
+            next_snapshot = self._monty_snapshot.resume(return_value=return_value)
+
+        return Snapshot(next_snapshot, self._source_map, self._externals)
+
+    def dump(self) -> bytes:
+        """
+        Serialize snapshot to bytes.
+
+        Returns:
+            Serialized snapshot data
+        """
+        return self._monty_snapshot.dump()
+
+    @staticmethod
+    def load(data: bytes, source_map: SourceMap, externals: dict[str, Callable]) -> "Snapshot":
+        """
+        Deserialize snapshot from bytes.
+
+        Args:
+            data: Serialized snapshot data
+            source_map: Line number mapping
+            externals: External function implementations
+
+        Returns:
+            Restored Snapshot instance
+        """
+        if pydantic_monty is None:
+            raise RuntimeError("pydantic-monty not installed")
+
+        monty_snapshot = pydantic_monty.MontySnapshot.load(data)
+        return Snapshot(monty_snapshot, source_map, externals)
+```
+
+### Testing/Validation
+
+Create `tests/unit/test_snapshot.py`:
+
+```python
+"""Test snapshot pause/resume functionality."""
+import pytest
+
+pytest.importorskip("pydantic_monty")
+
+from pathlib import Path
+from grail.script import load
+
+FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
+
+
+@pytest.mark.integration
+def test_snapshot_basic_properties():
+    """Should expose snapshot properties."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    async def double_impl(n: int) -> int:
+        return n * 2
+
+    snapshot = script.start(
+        inputs={"x": 5},
+        externals={"double": double_impl}
+    )
+
+    # Should be paused on first external call
+    assert snapshot.function_name == "double"
+    assert snapshot.args == () or 5 in snapshot.args or snapshot.kwargs.get("n") == 5
+    assert snapshot.is_complete is False
+
+
+@pytest.mark.integration
+def test_snapshot_resume():
+    """Should resume execution with return value."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    async def double_impl(n: int) -> int:
+        return n * 2
+
+    snapshot = script.start(
+        inputs={"x": 5},
+        externals={"double": double_impl}
+    )
+
+    # Resume with return value
+    result_snapshot = snapshot.resume(return_value=10)
+
+    # Should be complete now
+    assert result_snapshot.is_complete is True
+    assert result_snapshot.value == 10
+
+
+@pytest.mark.integration
+def test_snapshot_serialization():
+    """Should serialize and deserialize snapshots."""
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    async def double_impl(n: int) -> int:
+        return n * 2
+
+    snapshot = script.start(
+        inputs={"x": 5},
+        externals={"double": double_impl}
+    )
+
+    # Serialize
+    data = snapshot.dump()
+    assert isinstance(data, bytes)
+
+    # Deserialize
+    from grail.snapshot import Snapshot
+    restored = Snapshot.load(data, script.source_map, {"double": double_impl})
+
+    assert restored.function_name == snapshot.function_name
+    assert restored.is_complete == snapshot.is_complete
+```
+
+**Validation checklist**:
+- [ ] `pytest tests/unit/test_snapshot.py -m integration` passes
+- [ ] Snapshot properties are accessible
+- [ ] Resume works correctly
+- [ ] Serialization/deserialization works
+
+---
+
+## Step 14: Public API - __init__.py Exports
+
+**Purpose**: Define the public API surface (~15 symbols).
+
+### Work to be done
+
+Create `src/grail/__init__.py`:
+
+```python
+"""
+Grail - Transparent Python for Monty.
+
+A minimalist library for writing Monty code with full IDE support.
+"""
+
+__version__ = "2.0.0"
+
+# Core functions
+from grail.script import load, run
+
+# Declarations (for .pym files)
+from grail._external import external
+from grail._input import Input
+
+# Snapshot
+from grail.snapshot import Snapshot
+
+# Limits presets
+from grail.limits import STRICT, DEFAULT, PERMISSIVE
+
+# Errors
+from grail.errors import (
+    GrailError,
+    ParseError,
+    CheckError,
+    InputError,
+    ExternalError,
+    ExecutionError,
+    LimitError,
+    OutputError,
+)
+
+# Check result types
+from grail._types import CheckResult, CheckMessage
+
+# Define public API
+__all__ = [
+    # Core
+    "load",
+    "run",
+    # Declarations
+    "external",
+    "Input",
+    # Snapshot
+    "Snapshot",
+    # Limits
+    "STRICT",
+    "DEFAULT",
+    "PERMISSIVE",
+    # Errors
+    "GrailError",
+    "ParseError",
+    "CheckError",
+    "InputError",
+    "ExternalError",
+    "ExecutionError",
+    "LimitError",
+    "OutputError",
+    # Check results
+    "CheckResult",
+    "CheckMessage",
+]
+```
+
+### Testing/Validation
+
+Create `tests/unit/test_public_api.py`:
+
+```python
+"""Test public API surface."""
+import grail
+
+
+def test_public_api_symbols():
+    """Verify all public symbols are exported."""
+    expected = {
+        # Core
+        "load",
+        "run",
+        # Declarations
+        "external",
+        "Input",
+        # Snapshot
+        "Snapshot",
+        # Limits
+        "STRICT",
+        "DEFAULT",
+        "PERMISSIVE",
+        # Errors
+        "GrailError",
+        "ParseError",
+        "CheckError",
+        "InputError",
+        "ExternalError",
+        "ExecutionError",
+        "LimitError",
+        "OutputError",
+        # Check results
+        "CheckResult",
+        "CheckMessage",
+    }
+
+    for symbol in expected:
+        assert hasattr(grail, symbol), f"Missing public symbol: {symbol}"
+
+
+def test_version_exists():
+    """Should have __version__ attribute."""
+    assert hasattr(grail, "__version__")
+    assert isinstance(grail.__version__, str)
+
+
+def test_all_list():
+    """Should have __all__ list."""
+    assert hasattr(grail, "__all__")
+    assert isinstance(grail.__all__, list)
+    assert len(grail.__all__) >= 15
+
+
+def test_can_import_all():
+    """Should be able to import all public symbols."""
+    from grail import (
+        load, run, external, Input, Snapshot,
+        STRICT, DEFAULT, PERMISSIVE,
+        GrailError, ParseError, CheckError, InputError,
+        ExternalError, ExecutionError, LimitError, OutputError,
+        CheckResult, CheckMessage
+    )
+
+    assert load is not None
+    assert run is not None
+```
+
+**Validation checklist**:
+- [ ] `pytest tests/unit/test_public_api.py` passes
+- [ ] All 15+ public symbols are exported
+- [ ] __version__ is defined
+- [ ] __all__ list is correct
+
+---
+
+## Step 15: Integration & E2E Tests
+
+**Purpose**: Test complete workflows end-to-end.
+
+### Work to be done
+
+Create `tests/integration/test_end_to_end.py`:
+
+```python
+"""End-to-end integration tests."""
+import pytest
+from pathlib import Path
+import tempfile
+
+pytest.importorskip("pydantic_monty")
+
+import grail
+
+
+@pytest.mark.integration
+async def test_full_workflow():
+    """Test complete workflow: load -> check -> run."""
+    # Create a temporary .pym file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.pym', delete=False) as f:
+        f.write("""
+from grail import external, Input
+from typing import Any
+
+budget: float = Input("budget")
+department: str = Input("department", default="Engineering")
+
+@external
+async def get_team_size(dept: str) -> int:
+    '''Get team size for department.'''
+    ...
+
+@external
+async def calculate_budget(size: int, per_person: float) -> float:
+    '''Calculate total budget.'''
+    ...
+
+size = await get_team_size(department)
+total = await calculate_budget(size, budget / 10)
+
+{
+    "department": department,
+    "team_size": size,
+    "total_budget": total,
+    "over_budget": total > budget
+}
+""")
+        pym_path = Path(f.name)
+
+    try:
+        # Load
+        script = grail.load(pym_path, grail_dir=None)
+
+        # Check
+        check_result = script.check()
+        assert check_result.valid is True
+
+        # Run
+        async def get_team_size_impl(dept: str) -> int:
+            return 5
+
+        async def calculate_budget_impl(size: int, per_person: float) -> float:
+            return size * per_person
+
+        result = await script.run(
+            inputs={"budget": 1000.0, "department": "Engineering"},
+            externals={
+                "get_team_size": get_team_size_impl,
+                "calculate_budget": calculate_budget_impl,
+            }
+        )
+
+        assert result["department"] == "Engineering"
+        assert result["team_size"] == 5
+        assert result["total_budget"] == 500.0
+        assert result["over_budget"] is False
+
+    finally:
+        pym_path.unlink()
+
+
+@pytest.mark.integration
+def test_inline_run():
+    """Test grail.run() for inline code."""
+    import asyncio
+
+    result = asyncio.run(grail.run("x + y", inputs={"x": 1, "y": 2}))
+    assert result == 3
+
+
+@pytest.mark.integration
+async def test_with_resource_limits():
+    """Test execution with resource limits."""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.pym', delete=False) as f:
+        f.write("""
+from grail import Input
+
+x: int = Input("x")
+
+x * 2
+""")
+        pym_path = Path(f.name)
+
+    try:
+        script = grail.load(
+            pym_path,
+            limits=grail.STRICT,
+            grail_dir=None
+        )
+
+        result = await script.run(inputs={"x": 5})
+        assert result == 10
+
+    finally:
+        pym_path.unlink()
+
+
+@pytest.mark.integration
+async def test_pause_resume_workflow():
+    """Test pause/resume execution pattern."""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.pym', delete=False) as f:
+        f.write("""
+from grail import external, Input
+
+x: int = Input("x")
+
+@external
+async def add_one(n: int) -> int:
+    ...
+
+@external
+async def double(n: int) -> int:
+    ...
+
+step1 = await add_one(x)
+step2 = await double(step1)
+step2
+""")
+        pym_path = Path(f.name)
+
+    try:
+        async def add_one_impl(n: int) -> int:
+            return n + 1
+
+        async def double_impl(n: int) -> int:
+            return n * 2
+
+        externals = {
+            "add_one": add_one_impl,
+            "double": double_impl,
+        }
+
+        script = grail.load(pym_path, grail_dir=None)
+        snapshot = script.start(inputs={"x": 5}, externals=externals)
+
+        # Execute pause/resume loop
+        while not snapshot.is_complete:
+            func_name = snapshot.function_name
+            args = snapshot.args
+            kwargs = snapshot.kwargs
+
+            # Call the external function
+            result = await externals[func_name](*args, **kwargs)
+            snapshot = snapshot.resume(return_value=result)
+
+        final_result = snapshot.value
+        assert final_result == 12  # (5 + 1) * 2
+
+    finally:
+        pym_path.unlink()
+
+
+@pytest.mark.integration
+def test_error_handling():
+    """Test that errors are properly caught and mapped."""
+    import asyncio
+
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.pym', delete=False) as f:
+        f.write("""
+from grail import Input
+
+x: int = Input("x")
+
+y = undefined_variable
+""")
+        pym_path = Path(f.name)
+
+    try:
+        script = grail.load(pym_path, grail_dir=None)
+
+        with pytest.raises(grail.ExecutionError):
+            asyncio.run(script.run(inputs={"x": 5}))
+
+    finally:
+        pym_path.unlink()
+```
+
+Create `tests/integration/test_artifacts.py`:
+
+```python
+"""Test artifact generation and management."""
+import pytest
+import tempfile
+from pathlib import Path
+import json
+
+import grail
+
+
+@pytest.mark.integration
+def test_artifacts_created():
+    """Test that artifacts are created correctly."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        # Create .pym file
+        pym_file = tmpdir / "test.pym"
+        pym_file.write_text("""
+from grail import external, Input
+
+x: int = Input("x")
+
+@external
+async def process(n: int) -> int:
+    ...
+
+await process(x)
+""")
+
+        # Load with artifacts enabled
+        script = grail.load(pym_file, grail_dir=tmpdir / ".grail")
+
+        # Check artifacts exist
+        artifacts_dir = tmpdir / ".grail" / "test"
+        assert artifacts_dir.exists()
+        assert (artifacts_dir / "stubs.pyi").exists()
+        assert (artifacts_dir / "monty_code.py").exists()
+        assert (artifacts_dir / "check.json").exists()
+        assert (artifacts_dir / "externals.json").exists()
+        assert (artifacts_dir / "inputs.json").exists()
+
+        # Verify JSON artifacts are valid
+        check_data = json.loads((artifacts_dir / "check.json").read_text())
+        assert "valid" in check_data
+
+        externals_data = json.loads((artifacts_dir / "externals.json").read_text())
+        assert "externals" in externals_data
+
+        inputs_data = json.loads((artifacts_dir / "inputs.json").read_text())
+        assert "inputs" in inputs_data
+```
+
+**Validation checklist**:
+- [ ] `pytest tests/integration/ -m integration` passes
+- [ ] Full workflow test works
+- [ ] Pause/resume works end-to-end
+- [ ] Error handling works correctly
+- [ ] Artifacts are generated properly
+
+---
+
+## Step 16: Final Validation
+
+**Purpose**: Ensure everything works together and the library is ready to ship.
+
+### Work to be done
+
+1. **Run all tests**:
+
+```bash
+# Unit tests
+pytest tests/unit/ -v
+
+# Integration tests
+pytest tests/integration/ -m integration -v
+
+# All tests
+pytest tests/ -v
+```
+
+2. **Run linters and formatters**:
+
+```bash
+# Format code
+ruff format src/ tests/
+
+# Lint
+ruff check src/ tests/
+
+# Type check
+mypy src/grail/
+```
+
+3. **Test CLI commands**:
+
+```bash
+# Install in development mode
+pip install -e .
+
+# Test CLI
+grail --help
+grail init
+grail check
+grail clean
+```
+
+4. **Build documentation** (optional):
+
+```bash
+# If using sphinx or similar
+cd docs
+make html
+```
+
+5. **Create release checklist**:
+
+Create `RELEASE_CHECKLIST.md`:
+
+```markdown
+# Release Checklist
+
+## Pre-Release
+
+- [ ] All tests pass (unit + integration)
+- [ ] Code is formatted with ruff
+- [ ] No linter errors
+- [ ] Type checking passes
+- [ ] CLI commands work correctly
+- [ ] Documentation is up to date
+- [ ] CHANGELOG.md is updated
+- [ ] Version bumped in __init__.py
+
+## Testing
+
+- [ ] Test in fresh virtual environment
+- [ ] Test with pydantic-monty installed
+- [ ] Test without pydantic-monty (should skip integration tests)
+- [ ] Test on Python 3.10, 3.11, 3.12, 3.13
+- [ ] Test CLI on Linux/macOS/Windows
+
+## Release
+
+- [ ] Tag release in git
+- [ ] Build distributions: `python -m build`
+- [ ] Upload to PyPI: `twine upload dist/*`
+- [ ] Create GitHub release with notes
+- [ ] Update documentation site
+
+## Post-Release
+
+- [ ] Verify package installs from PyPI
+- [ ] Test example workflows
+- [ ] Monitor for issues
+```
+
+6. **Create comprehensive example**:
+
+Create `examples/expense_analysis/`:
+
+```
+examples/expense_analysis/
+├── analysis.pym          # The Monty script
+├── host.py              # Host implementation
+├── data.py              # Mock data/external functions
+└── README.md            # Usage instructions
+```
+
+**`examples/expense_analysis/analysis.pym`**:
+```python
+from grail import external, Input
+from typing import Any
+
+# Inputs
+budget_limit: float = Input("budget_limit")
+department: str = Input("department", default="Engineering")
+
+# External functions
+@external
+async def get_team_members(department: str) -> dict[str, Any]:
+    """Get list of team members for a department."""
+    ...
+
+@external
+async def get_expenses(user_id: int) -> dict[str, Any]:
+    """Get expense line items for a user."""
+    ...
+
+@external
+async def get_custom_budget(user_id: int) -> dict[str, Any] | None:
+    """Get custom budget for a user if they have one."""
+    ...
+
+# Analysis logic
+team_data = await get_team_members(department=department)
+members = team_data.get("members", [])
+
+over_budget = []
+
+for member in members:
+    uid = member["id"]
+    expenses = await get_expenses(user_id=uid)
+    items = expenses.get("items", [])
+
+    total = sum(item["amount"] for item in items)
+
+    if total > budget_limit:
+        custom = await get_custom_budget(user_id=uid)
+        if custom is None or total > custom.get("limit", budget_limit):
+            over_budget.append({
+                "user_id": uid,
+                "name": member["name"],
+                "total": total,
+                "over_by": total - budget_limit
+            })
+
+{
+    "analyzed": len(members),
+    "over_budget_count": len(over_budget),
+    "details": over_budget,
+}
+```
+
+**`examples/expense_analysis/host.py`**:
+```python
+"""Host file for expense analysis example."""
+import asyncio
+from grail import load
+from data import get_team_members, get_expenses, get_custom_budget
+
+
+async def main():
+    # Load the script
+    script = load("analysis.pym")
+
+    # Check for errors
+    check_result = script.check()
+    if not check_result.valid:
+        print("Script has errors:")
+        for error in check_result.errors:
+            print(f"  Line {error.lineno}: {error.message}")
+        return
+
+    # Run the analysis
+    result = await script.run(
+        inputs={
+            "budget_limit": 5000.0,
+            "department": "Engineering"
+        },
+        externals={
+            "get_team_members": get_team_members,
+            "get_expenses": get_expenses,
+            "get_custom_budget": get_custom_budget,
+        },
+    )
+
+    print(f"Analyzed {result['analyzed']} team members")
+    print(f"Found {result['over_budget_count']} over budget")
+
+    if result['details']:
+        print("\nDetails:")
+        for item in result['details']:
+            print(f"  {item['name']}: ${item['total']:.2f} (over by ${item['over_by']:.2f})")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+**`examples/expense_analysis/data.py`**:
+```python
+"""Mock data and external function implementations."""
+from typing import Any
+
+
+async def get_team_members(department: str) -> dict[str, Any]:
+    """Mock implementation of get_team_members."""
+    return {
+        "members": [
+            {"id": 1, "name": "Alice"},
+            {"id": 2, "name": "Bob"},
+            {"id": 3, "name": "Charlie"},
+        ]
+    }
+
+
+async def get_expenses(user_id: int) -> dict[str, Any]:
+    """Mock implementation of get_expenses."""
+    expenses = {
+        1: [{"amount": 3000}, {"amount": 2500}],
+        2: [{"amount": 1000}],
+        3: [{"amount": 4000}, {"amount": 2000}],
+    }
+
+    return {
+        "items": expenses.get(user_id, [])
+    }
+
+
+async def get_custom_budget(user_id: int) -> dict[str, Any] | None:
+    """Mock implementation of get_custom_budget."""
+    # Alice has a custom budget
+    if user_id == 1:
+        return {"limit": 6000.0}
+    return None
+```
+
+7. **Final test run**:
+
+```bash
+# Test the example
+cd examples/expense_analysis
+python host.py
+
+# Should output:
+# Analyzed 3 team members
+# Found 1 over budget
+#
+# Details:
+#   Charlie: $6000.00 (over by $1000.00)
+```
+
+### Validation Checklist
+
+**Code Quality**:
+- [ ] All unit tests pass
+- [ ] All integration tests pass
+- [ ] No linter errors
+- [ ] No type checking errors
+- [ ] Code coverage > 80%
+
+**Functionality**:
+- [ ] Can load .pym files
+- [ ] Parser extracts externals and inputs correctly
+- [ ] Checker validates Monty compatibility
+- [ ] Stubs are generated correctly
+- [ ] Code generation works
+- [ ] Artifacts are created
+- [ ] Monty integration works
+- [ ] Error handling and mapping works
+- [ ] Limits work correctly
+- [ ] Snapshot pause/resume works
+
+**CLI**:
+- [ ] `grail init` works
+- [ ] `grail check` works
+- [ ] `grail run` works
+- [ ] `grail clean` works
+- [ ] `grail watch` works (if watchfiles installed)
+
+**Public API**:
+- [ ] All 15+ symbols are exported
+- [ ] Documentation is complete
+- [ ] Examples work correctly
+
+**Distribution**:
+- [ ] Package builds successfully
+- [ ] Can install from wheel
+- [ ] CLI entry point works after install
+- [ ] Dependencies are correct
+
+---
+
+## Completion Summary
+
+Congratulations! You've successfully implemented Grail v2 from scratch. Here's what you've built:
+
+### Core Components (Steps 0-10)
+✅ **Step 0**: Grail declarations (`external`, `Input`)
+✅ **Step 1**: Core type definitions
+✅ **Step 2**: Error hierarchy
+✅ **Step 3**: Resource limits parser
+✅ **Step 4**: Test fixtures
+✅ **Step 5**: Parser (AST extraction)
+✅ **Step 6**: Checker (Monty compatibility)
+✅ **Step 7**: Stubs generator
+✅ **Step 8**: Code generator
+✅ **Step 9**: Artifacts manager
+✅ **Step 10**: Monty integration
+
+### High-Level API (Steps 11-16)
+✅ **Step 11**: GrailScript class (main API)
+✅ **Step 12**: CLI commands
+✅ **Step 13**: Snapshot wrapper
+✅ **Step 14**: Public API exports
+✅ **Step 15**: Integration tests
+✅ **Step 16**: Final validation
+
+### What You've Achieved
+
+1. **~15 public symbols** - Clean, minimal API surface
+2. **Full IDE support** - `.pym` files work in VSCode, PyCharm, etc.
+3. **Pre-flight validation** - Catch errors before runtime
+4. **Transparent execution** - All artifacts visible in `.grail/`
+5. **Pause/resume** - First-class support for long-running workflows
+6. **Type safety** - Full integration with Monty's type checker
+7. **CLI tooling** - Complete command-line interface
+8. **Comprehensive tests** - Unit + integration + E2E coverage
+
+### Next Steps
+
+1. **Ship it**: Follow the release checklist
+2. **Gather feedback**: Share with early users
+3. **Iterate**: Based on real-world usage
+4. **Document**: Write tutorials and guides
+5. **Extend**: Add features as Monty evolves
+
+You've built a production-ready library that makes Monty programming delightful. Well done!
