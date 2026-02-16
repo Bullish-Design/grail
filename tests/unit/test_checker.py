@@ -97,3 +97,19 @@ x: int = Input("x")
     check_result = check_pym(result)
 
     assert any(warning.code == "W001" for warning in check_result.warnings)
+
+
+def test_external_async_not_tracked_as_feature() -> None:
+    """External async functions should not count toward async_await feature tracking."""
+    content = """\
+from grail import external
+
+@external
+async def fetch(url: str) -> str: ...
+
+result = "hello"
+"""
+    parsed = parse_pym_content(content)
+    result = check_pym(parsed)
+
+    assert "async_await" not in result.info.get("monty_features_used", [])
