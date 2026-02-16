@@ -87,11 +87,54 @@ final = result * 2
     assert "'value': final" in monty_code
 
 
+def test_source_map_accounts_for_stripped_lines():
+    """
+    When @external functions are removed, the source map should still
+    point Monty lines back to the correct .pym lines.
+    """
+    content = """\
+from grail import external, Input
+
+budget: float = Input("budget")
+
+@external
+async def fetch_data(key: str) -> dict: ...
+
+result = budget * 2
+"""
+    parsed = parse_pym_content(content)
+    monty_code, source_map = generate_monty_code(parsed)
+
+    monty_lines = monty_code.strip().splitlines()
+    result_monty_line = None
+    for i, line in enumerate(monty_lines, 1):
+        if "result = budget * 2" in line:
+            result_monty_line = i
+            break
+
+    assert result_monty_line is not None, "Expected 'result = budget * 2' in Monty code"
+    assert source_map.monty_to_pym.get(result_monty_line) == 8
+
+
+def test_source_map_identity_for_unchanged_lines():
+    """Lines that aren't affected by stripping should still map correctly."""
+    content = """\
+x = 1
+y = 2
+z = x + y
+"""
+    parsed = parse_pym_content(content)
+    monty_code, source_map = generate_monty_code(parsed)
+
+    for monty_line, pym_line in source_map.monty_to_pym.items():
+        assert monty_line == pym_line
+
+
 def test_source_map_created():
     """Should create source map for line number mapping."""
     content = """x = 1
-y = 2
-z = x + y"""
+ y = 2
+ z = x + y"""
 
     parse_result = parse_pym_content(content)
     monty_code, source_map = generate_monty_code(parse_result)
