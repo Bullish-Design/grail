@@ -133,6 +133,7 @@ def test_map_error_to_pym_uses_source_map():
         monty_code="",
         stubs="",
         source_map=source_map,
+        source_lines=["x = 1"],
         limits=None,
         files=None,
         grail_dir=None,

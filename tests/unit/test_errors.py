@@ -30,18 +30,29 @@ def test_parse_error_formatting() -> None:
     assert "unexpected token" in str(err)
 
 
-def test_execution_error_with_context() -> None:
-    """ExecutionError should include source context."""
+def test_execution_error_shows_context() -> None:
+    """ExecutionError with source_context should display surrounding lines."""
+    source = "x = 1\ny = 2\nz = undefined\nw = 4\nv = 5"
     err = ExecutionError(
-        "NameError: undefined_var",
-        lineno=22,
-        source_context="  22 | if total > undefined_var:",
-        suggestion="Check if variable is declared",
+        message="NameError: name 'undefined' is not defined",
+        lineno=3,
+        source_context=source,
     )
-    msg = str(err)
-    assert "Line 22" in msg
-    assert "undefined_var" in msg
-    assert "Suggestion:" in msg
+    formatted = str(err)
+    assert "> " in formatted
+    assert "3 |" in formatted
+    assert "z = undefined" in formatted
+    assert "x = 1" in formatted
+    assert "w = 4" in formatted
+
+
+def test_execution_error_without_context() -> None:
+    """ExecutionError without source_context should still format cleanly."""
+    err = ExecutionError(message="Something failed", lineno=5)
+    formatted = str(err)
+    assert "Line 5" in formatted
+    assert "Something failed" in formatted
+    assert "> " not in formatted
 
 
 def test_limit_error_is_execution_error() -> None:
