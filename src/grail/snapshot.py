@@ -1,5 +1,8 @@
 """Snapshot wrapper for pause/resume execution."""
 
+import asyncio
+import inspect
+
 from typing import Any, Callable
 
 try:
@@ -63,7 +66,7 @@ class Snapshot:
         """
         # if not self.is_complete:
         #    raise RuntimeError("Execution not complete")
-        return self._monty_snapshot.value
+        return self._monty_snapshot.output
 
     def resume(
         self, return_value: Any = None, exception: BaseException | None = None
@@ -78,10 +81,33 @@ class Snapshot:
         Returns:
             New Snapshot if more calls pending, or final result
         """
+
         if exception is not None:
             next_snapshot = self._monty_snapshot.resume(exception=exception)
         else:
-            next_snapshot = self._monty_snapshot.resume(return_value=return_value)
+            # Check if the current external function is async
+            func_name = self._monty_snapshot.function_name
+            if func_name in self._externals:
+                external_func = self._externals[func_name]
+                if asyncio.iscoroutinefunction(external_func) or inspect.isasyncgenfunction(
+                    external_func
+                ):
+                    # Async external functions require the future pattern
+                    call_id = self._monty_snapshot.call_id
+
+                    # Mark as future
+                    future_snapshot = self._monty_snapshot.resume(future=...)
+
+                    # Resolve the future
+                    next_snapshot = future_snapshot.resume(
+                        {call_id: {"return_value": return_value}}
+                    )
+                else:
+                    # Sync external functions can use direct return value
+                    next_snapshot = self._monty_snapshot.resume(return_value=return_value)
+            else:
+                # External function not found in registry, try direct resume
+                next_snapshot = self._monty_snapshot.resume(return_value=return_value)
 
         return Snapshot(next_snapshot, self._source_map, self._externals)
 
