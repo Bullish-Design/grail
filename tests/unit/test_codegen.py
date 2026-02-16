@@ -1,5 +1,3 @@
-"""Test code generation."""
-
 from grail.parser import parse_pym_content
 from grail.codegen import generate_monty_code
 
@@ -144,3 +142,24 @@ z = x + y
     # Source map should have mappings
     assert len(source_map.pym_to_monty) > 0
     assert len(source_map.monty_to_pym) > 0
+
+
+def test_generate_monty_code_produces_valid_python():
+    """The output of generate_monty_code should always be valid Python."""
+    import ast
+
+    content = """\
+from grail import external, Input
+
+budget: float = Input("budget")
+
+@external
+async def fetch(url: str) -> str: ...
+
+result = budget * 2
+"""
+    parsed = parse_pym_content(content)
+    monty_code, _ = generate_monty_code(parsed)
+
+    # Should not raise
+    ast.parse(monty_code)
