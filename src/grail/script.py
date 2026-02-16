@@ -258,9 +258,9 @@ class GrailScript:
             result = await pydantic_monty.run_monty_async(
                 monty,
                 inputs=inputs,
-                external_functions=externals,  # Changed from: externals=externals
-                os=os_access,  # Changed from: os_access=os_access
-                limits=parsed_limits,  # Added: pass limits here
+                external_functions=externals,
+                os=os_access,
+                limits=parsed_limits,
             )
             success = True
             error_msg = None
