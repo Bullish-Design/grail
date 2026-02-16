@@ -1,4 +1,4 @@
-# Grail v2: Complete Redesign Spec
+# Grail: Complete Spec
 
 ## Executive Summary
 

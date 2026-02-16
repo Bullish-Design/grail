@@ -17,7 +17,7 @@
 
 ## 1. Introduction
 
-Grail v2 is a Python library that provides a transparent, first-class programming experience for Monty (a secure Python interpreter written in Rust). Grail's purpose is to eliminate friction when writing code for Monty while maintaining visibility into Monty's limitations.
+Grail v2 is a Python library that provides a transparent, first-class programming experience for Monty (a secure Python-like interpreter written in Rust). Grail's purpose is to eliminate friction when writing code for Monty while maintaining visibility into Monty's limitations.
 
 ### Goals
 
