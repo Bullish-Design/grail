@@ -134,3 +134,35 @@ def process(x: int, y: int = 10) -> int:
     assert func.parameters[0].default is None
     assert func.parameters[1].name == "y"
     assert func.parameters[1].default == 10
+
+
+def test_nested_external_not_extracted() -> None:
+    """An @external function inside another function should NOT be extracted."""
+    content = """
+from grail import external
+
+
+def outer():
+    @external
+    def inner(x: int) -> str: ...
+
+    return inner(5)
+"""
+    result = parse_pym_content(content)
+
+    assert "inner" not in result.externals
+
+
+def test_nested_input_not_extracted() -> None:
+    """An Input() call inside a function should NOT be extracted."""
+    content = """
+from grail import Input
+
+
+def compute():
+    x: int = Input("x")
+    return x * 2
+"""
+    result = parse_pym_content(content)
+
+    assert "x" not in result.inputs
