@@ -348,10 +348,11 @@ class GrailScript:
             self.monty_code,
             type_check=True,
             type_check_stubs=self.stubs,
+            inputs=[inputs],
         )
 
         # Start execution (this will pause on first external call)
-        monty_snapshot = pydantic_monty.start_monty(monty, inputs=inputs)
+        monty_snapshot = monty.start(inputs=inputs)
 
         return Snapshot(monty_snapshot, self.source_map, externals)
 
