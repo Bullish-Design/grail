@@ -49,3 +49,16 @@ def test_limit_error_is_execution_error() -> None:
     err = LimitError("Memory limit exceeded", limit_type="memory")
     assert isinstance(err, ExecutionError)
     assert err.limit_type == "memory"
+
+
+def test_limit_error_has_limit_type() -> None:
+    """LimitError should carry the limit_type field."""
+    err = LimitError(message="Memory limit exceeded", limit_type="memory")
+    assert err.limit_type == "memory"
+    assert "Memory limit exceeded" in str(err)
+
+
+def test_limit_error_without_limit_type() -> None:
+    """LimitError with no limit_type should default to None."""
+    err = LimitError(message="Unknown limit exceeded")
+    assert err.limit_type is None

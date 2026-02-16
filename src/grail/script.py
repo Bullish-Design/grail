@@ -182,14 +182,24 @@ class GrailScript:
         """
         # Extract error message
         error_msg = str(error)
+        error_msg_lower = error_msg.lower()
 
         # Try to extract line number from Monty error
         # (This is simplified - real implementation would parse Monty's traceback)
         lineno = None
 
+        # Heuristic: infer limit type from Monty error message keywords.
+        limit_type = None
+        if "memory" in error_msg_lower:
+            limit_type = "memory"
+        elif "duration" in error_msg_lower:
+            limit_type = "duration"
+        elif "recursion" in error_msg_lower:
+            limit_type = "recursion"
+
         # Check if it's a limit error
-        if "memory" in error_msg.lower() or "limit" in error_msg.lower():
-            return LimitError(error_msg)
+        if "limit" in error_msg_lower or limit_type is not None:
+            return LimitError(error_msg, limit_type=limit_type)
 
         return ExecutionError(error_msg, lineno=lineno, source_context=None, suggestion=None)
 
