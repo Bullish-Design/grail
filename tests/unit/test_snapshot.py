@@ -67,3 +67,26 @@ def test_snapshot_serialization():
 
     assert restored.function_name == snapshot.function_name
     assert restored.is_complete == snapshot.is_complete
+
+
+@pytest.mark.integration
+def test_snapshot_dump_load_requires_original_context():
+    """
+    Loading a snapshot requires the same source_map and externals
+    that were used when the snapshot was created.
+    """
+    script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
+
+    async def double_impl(n: int) -> int:
+        return n * 2
+
+    snapshot = script.start(inputs={"x": 5}, externals={"double": double_impl})
+    data = snapshot.dump()
+
+    from grail.snapshot import Snapshot
+
+    restored = Snapshot.load(data, script.source_map, {"double": double_impl})
+    result_snapshot = restored.resume(return_value=10)
+
+    assert result_snapshot.is_complete is True
+    assert result_snapshot.value == 10

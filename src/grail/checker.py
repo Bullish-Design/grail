@@ -151,6 +151,10 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
             or (isinstance(decorator, ast.Attribute) and decorator.attr == "external")
             for decorator in node.decorator_list
         )
+        # External async functions are excluded from feature tracking because
+        # they are stripped during code generation and don't represent actual
+        # async usage within the Monty sandbox. Only user-defined async code
+        # counts as a Monty feature dependency.
         if not is_external:
             self.features_used.add("async_await")
         self.generic_visit(node)

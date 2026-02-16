@@ -2,6 +2,7 @@
 
 import ast
 from grail._types import ParseResult, SourceMap
+from grail.errors import GrailError
 
 
 class GrailDeclarationStripper(ast.NodeTransformer):
@@ -100,6 +101,15 @@ def generate_monty_code(parse_result: ParseResult) -> tuple[str, SourceMap]:
 
     # Generate code from transformed AST
     monty_code = ast.unparse(transformed)
+
+    # Validate generated code is syntactically valid
+    try:
+        ast.parse(monty_code)
+    except SyntaxError as exc:
+        raise GrailError(
+            f"Code generation produced invalid Python: {exc}. "
+            "This is a bug in grail — please report it."
+        )
 
     # Build source map
     source_map = build_source_map(transformed, monty_code)

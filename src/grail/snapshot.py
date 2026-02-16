@@ -1,4 +1,15 @@
-"""Snapshot wrapper for pause/resume execution."""
+"""Snapshot wrapper for pause/resume execution.
+
+Snapshots capture the execution state of a GrailScript program so it can pause
+at external function boundaries and later resume where it left off. External
+calls may be synchronous (a direct return value) or asynchronous (Monty expects
+an intermediate future). For async externals, the snapshot resume protocol
+creates a future with a call ID, then resolves it with the final value.
+
+Note: serialized snapshots do NOT include the `SourceMap` or external function
+registry; you must retain those from the original execution context in order to
+load and resume a snapshot.
+"""
 
 import asyncio
 import inspect
@@ -71,15 +82,18 @@ class Snapshot:
     def resume(
         self, return_value: Any = None, exception: BaseException | None = None
     ) -> "Snapshot":
-        """
-        Resume execution with a return value or exception.
+        """Resume execution after an external function call.
+
+        If the external is async, Monty expects a future-style resume (call ID
+        first, then final value). Sync externals resume with the return value
+        directly.
 
         Args:
             return_value: Value to return from external function
             exception: Exception to raise in Monty
 
         Returns:
-            New Snapshot if more calls pending, or final result
+            Snapshot representing the next pause point or completion.
         """
 
         if exception is not None:
@@ -92,13 +106,17 @@ class Snapshot:
                 if asyncio.iscoroutinefunction(external_func) or inspect.isasyncgenfunction(
                     external_func
                 ):
-                    # Async external functions require the future pattern
+                    # Async external function protocol:
+                    # 1. Monty pauses at an external call, providing a call_id.
+                    # 2. We call the async external function ourselves.
+                    # 3. We create a "future" resume with the call_id.
+                    # 4. We resolve the future with the actual return value.
+                    # This two-step resume is required because Monty's async model
+                    # uses futures to represent pending async operations.
                     call_id = self._monty_snapshot.call_id
 
-                    # Mark as future
                     future_snapshot = self._monty_snapshot.resume(future=...)
 
-                    # Resolve the future
                     next_snapshot = future_snapshot.resume(
                         {call_id: {"return_value": return_value}}
                     )
@@ -112,18 +130,21 @@ class Snapshot:
         return Snapshot(next_snapshot, self._source_map, self._externals)
 
     def dump(self) -> bytes:
-        """
-        Serialize snapshot to bytes.
+        """Serialize the current snapshot to bytes.
 
         Returns:
-            Serialized snapshot data
+            Serialized snapshot data. This does not include the source map or
+            externals registry; those must be supplied when loading.
         """
         return self._monty_snapshot.dump()
 
     @staticmethod
     def load(data: bytes, source_map: SourceMap, externals: dict[str, Callable]) -> "Snapshot":
-        """
-        Deserialize snapshot from bytes.
+        """Deserialize a snapshot from bytes.
+
+        Note: source_map and externals are NOT included in the serialized data
+        and must be provided from the original GrailScript context. This means
+        you must retain access to the original script to restore a snapshot.
 
         Args:
             data: Serialized snapshot data
