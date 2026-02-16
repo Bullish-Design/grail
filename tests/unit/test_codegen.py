@@ -132,9 +132,11 @@ z = x + y
 
 def test_source_map_created():
     """Should create source map for line number mapping."""
-    content = """x = 1
- y = 2
- z = x + y"""
+    content = """\
+x = 1
+y = 2
+z = x + y
+"""
 
     parse_result = parse_pym_content(content)
     monty_code, source_map = generate_monty_code(parse_result)
