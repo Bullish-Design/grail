@@ -110,7 +110,7 @@ def test_run_rejects_invalid_input_format(tmp_path, capsys):
     captured = capsys.readouterr()
 
     assert result == 1
-    assert "Invalid input format" in captured.out
+    assert "Invalid input format" in captured.err
 
 
 def test_run_input_flag_appears_in_help():
@@ -122,3 +122,38 @@ def test_run_input_flag_appears_in_help():
     )
 
     assert "--input" in result.stdout
+
+
+def test_check_nonexistent_file_shows_friendly_error(capsys):
+    """Running grail check on a missing file should show a clear error."""
+    args = argparse.Namespace(files=["missing.pym"], format="text", strict=False, verbose=False)
+
+    result = cmd_check(args)
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "Error:" in captured.err
+    assert "not found" in captured.err.lower()
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
+
+
+def test_check_invalid_pym_shows_friendly_error(tmp_path, capsys):
+    """Running grail check on a malformed .pym should show the parse error clearly."""
+    bad_file = tmp_path / "bad.pym"
+    bad_file.write_text("def foo(:\n")
+
+    args = argparse.Namespace(
+        files=[str(bad_file)],
+        format="text",
+        strict=False,
+        verbose=False,
+    )
+
+    result = cmd_check(args)
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "Syntax error" in captured.err
+    assert "Traceback" not in captured.err
+    assert "Traceback" not in captured.out
