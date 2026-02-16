@@ -8,7 +8,7 @@ import json
 import subprocess
 import sys
 
-from grail.cli import cmd_init, cmd_check, cmd_clean, cmd_run
+from grail.cli import cmd_init, cmd_check, cmd_clean, cmd_run, cmd_watch
 import argparse
 
 
@@ -157,3 +157,24 @@ def test_check_invalid_pym_shows_friendly_error(tmp_path, capsys):
     assert "Syntax error" in captured.err
     assert "Traceback" not in captured.err
     assert "Traceback" not in captured.out
+
+
+def test_watch_missing_dependency_shows_install_hint(capsys, monkeypatch):
+    """When watchfiles is not installed, grail watch should suggest pip install grail[watch]."""
+    import builtins
+
+    original_import = builtins.__import__
+
+    def mocked_import(name, *args, **kwargs):
+        if name == "watchfiles":
+            raise ImportError("No module named 'watchfiles'")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", mocked_import)
+
+    args = argparse.Namespace(dir=None)
+    result = cmd_watch(args)
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "pip install grail[watch]" in captured.err

@@ -22,6 +22,7 @@ dev = [
   "ruff>=0.8",
   "ty>=0.0.1a17",
 ]
+watch = ["watchfiles>=0.21"]
 
 [project.scripts]
 grail = "grail.cli:main"

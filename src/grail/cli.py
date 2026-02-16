@@ -281,7 +281,11 @@ def cmd_watch(args):
     try:
         import watchfiles
     except ImportError:
-        print("Error: watchfiles not installed. Install with: pip install watchfiles")
+        print(
+            "Error: 'grail watch' requires the watchfiles package.\n"
+            "Install it with: pip install grail[watch]",
+            file=sys.stderr,
+        )
         return 1
 
     watch_dir = Path(args.dir) if args.dir else Path.cwd()
