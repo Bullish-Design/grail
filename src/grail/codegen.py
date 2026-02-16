@@ -47,15 +47,12 @@ class GrailDeclarationStripper(ast.NodeTransformer):
         return node
 
 
-def build_source_map(original_lines: list[str], generated_code: str) -> SourceMap:
+def build_source_map(transformed_ast: ast.Module, generated_code: str) -> SourceMap:
     """
     Build line number mapping between .pym and generated code.
 
-    This is a simplified version - for more accurate mapping,
-    we'd need to track transformations during AST processing.
-
     Args:
-        original_lines: Source lines from .pym file
+        transformed_ast: AST after stripping declarations
         generated_code: Generated Monty code
 
     Returns:
@@ -63,23 +60,19 @@ def build_source_map(original_lines: list[str], generated_code: str) -> SourceMa
     """
     source_map = SourceMap()
 
-    # Simple heuristic: map based on matching content
-    # For now, just create identity mapping for matching lines
-    generated_lines = generated_code.splitlines()
+    generated_ast = ast.parse(generated_code)
 
-    pym_idx = 0
-    monty_idx = 0
-
-    while pym_idx < len(original_lines) and monty_idx < len(generated_lines):
-        pym_line = original_lines[pym_idx].strip()
-        monty_line = generated_lines[monty_idx].strip()
-
-        if pym_line == monty_line and pym_line:
-            # Lines match - create mapping
-            source_map.add_mapping(pym_line=pym_idx + 1, monty_line=monty_idx + 1)
-
-        pym_idx += 1
-        monty_idx += 1
+    for transformed_node, generated_node in zip(
+        ast.walk(transformed_ast),
+        ast.walk(generated_ast),
+    ):
+        transformed_lineno = getattr(transformed_node, "lineno", None)
+        generated_lineno = getattr(generated_node, "lineno", None)
+        if transformed_lineno is not None and generated_lineno is not None:
+            source_map.add_mapping(
+                pym_line=transformed_lineno,
+                monty_line=generated_lineno,
+            )
 
     return source_map
 
@@ -109,6 +102,6 @@ def generate_monty_code(parse_result: ParseResult) -> tuple[str, SourceMap]:
     monty_code = ast.unparse(transformed)
 
     # Build source map
-    source_map = build_source_map(parse_result.source_lines, monty_code)
+    source_map = build_source_map(transformed, monty_code)
 
     return monty_code, source_map

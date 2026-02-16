@@ -64,8 +64,8 @@ class Snapshot:
         Raises:
             RuntimeError: If execution not complete
         """
-        # if not self.is_complete:
-        #    raise RuntimeError("Execution not complete")
+        if not self.is_complete:
+            raise RuntimeError("Execution not complete")
         return self._monty_snapshot.output
 
     def resume(

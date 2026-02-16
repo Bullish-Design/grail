@@ -1,6 +1,13 @@
 """Type stub generator for Monty's type checker."""
 
+import re
+
 from grail._types import ExternalSpec, InputSpec
+
+
+def _needs_any_import(type_str: str) -> bool:
+    """Check if a type annotation string references typing.Any."""
+    return bool(re.search(r"\bAny\b", type_str))
 
 
 def generate_stubs(
@@ -23,14 +30,14 @@ def generate_stubs(
     needs_any = False
 
     for external in externals.values():
-        if "Any" in external.return_type:
+        if _needs_any_import(external.return_type):
             needs_any = True
         for param in external.parameters:
-            if "Any" in param.type_annotation:
+            if _needs_any_import(param.type_annotation):
                 needs_any = True
 
     for input_spec in inputs.values():
-        if "Any" in input_spec.type_annotation:
+        if _needs_any_import(input_spec.type_annotation):
             needs_any = True
 
     if needs_any:

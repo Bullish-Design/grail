@@ -102,10 +102,12 @@ def validate_external_function(
 
     # Skip optional docstring (first statement if it's a string constant)
     body_start_idx = 0
-    if (len(func_node.body) > 0 and
-        isinstance(func_node.body[0], ast.Expr) and
-        isinstance(func_node.body[0].value, ast.Constant) and
-        isinstance(func_node.body[0].value.value, str)):
+    if (
+        len(func_node.body) > 0
+        and isinstance(func_node.body[0], ast.Expr)
+        and isinstance(func_node.body[0].value, ast.Constant)
+        and isinstance(func_node.body[0].value.value, str)
+    ):
         body_start_idx = 1
 
     remaining_body = func_node.body[body_start_idx:]
@@ -147,7 +149,7 @@ def extract_externals(module: ast.Module) -> dict[str, ExternalSpec]:
     """
     externals: dict[str, ExternalSpec] = {}
 
-    for node in ast.walk(module):
+    for node in module.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
 
@@ -196,7 +198,7 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
     """
     inputs: dict[str, InputSpec] = {}
 
-    for node in ast.walk(module):
+    for node in module.body:
         # Check annotated assignments (x: int = Input("x"))
         if isinstance(node, ast.AnnAssign):
             if not isinstance(node.value, ast.Call):

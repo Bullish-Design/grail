@@ -63,6 +63,7 @@ def test_validate_externals_extra_warns(capsys):
     assert "Extra external 'extra'" in captured.out
 
 
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_run_simple_script():
     """Should execute simple script."""

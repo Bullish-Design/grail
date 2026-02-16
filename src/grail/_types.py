@@ -61,8 +61,11 @@ class SourceMap:
     def add_mapping(self, pym_line: int, monty_line: int) -> None:
         """Add a bidirectional line mapping."""
 
+        if monty_line in self.monty_to_pym:
+            return
+
         self.monty_to_pym[monty_line] = pym_line
-        self.pym_to_monty[pym_line] = monty_line
+        self.pym_to_monty.setdefault(pym_line, monty_line)
 
 
 @dataclass

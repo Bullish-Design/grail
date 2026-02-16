@@ -95,3 +95,41 @@ def test_multiple_inputs_and_externals() -> None:
     assert "b: str" in stub
     assert "async def func1() -> None:" in stub
     assert "def func2() -> str:" in stub
+
+
+def test_any_detection_does_not_match_substring() -> None:
+    """Type annotations like 'Company' should not trigger an Any import."""
+    externals = {
+        "get_company": ExternalSpec(
+            name="get_company",
+            is_async=False,
+            parameters=[],
+            return_type="Company",
+            docstring=None,
+            lineno=1,
+            col_offset=0,
+        )
+    }
+
+    result = generate_stubs(externals=externals, inputs={})
+
+    assert "from typing import Any" not in result
+
+
+def test_any_detection_matches_actual_any() -> None:
+    """A return type of 'Any' should trigger the Any import."""
+    externals = {
+        "get_data": ExternalSpec(
+            name="get_data",
+            is_async=False,
+            parameters=[],
+            return_type="Any",
+            docstring=None,
+            lineno=1,
+            col_offset=0,
+        )
+    }
+
+    result = generate_stubs(externals=externals, inputs={})
+
+    assert "from typing import Any" in result

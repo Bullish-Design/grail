@@ -24,6 +24,8 @@ def test_snapshot_basic_properties():
     assert snapshot.function_name == "double"
     assert snapshot.args == () or 5 in snapshot.args or snapshot.kwargs.get("n") == 5
     assert snapshot.is_complete is False
+    with pytest.raises(RuntimeError, match="Execution not complete"):
+        assert snapshot.value is None
 
 
 @pytest.mark.integration

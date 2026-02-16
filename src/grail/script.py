@@ -182,14 +182,24 @@ class GrailScript:
         """
         # Extract error message
         error_msg = str(error)
+        error_msg_lower = error_msg.lower()
 
         # Try to extract line number from Monty error
         # (This is simplified - real implementation would parse Monty's traceback)
         lineno = None
 
+        # Heuristic: infer limit type from Monty error message keywords.
+        limit_type = None
+        if "memory" in error_msg_lower:
+            limit_type = "memory"
+        elif "duration" in error_msg_lower:
+            limit_type = "duration"
+        elif "recursion" in error_msg_lower:
+            limit_type = "recursion"
+
         # Check if it's a limit error
-        if "memory" in error_msg.lower() or "limit" in error_msg.lower():
-            return LimitError(error_msg)
+        if "limit" in error_msg_lower or limit_type is not None:
+            return LimitError(error_msg, limit_type=limit_type)
 
         return ExecutionError(error_msg, lineno=lineno, source_context=None, suggestion=None)
 
@@ -258,9 +268,9 @@ class GrailScript:
             result = await pydantic_monty.run_monty_async(
                 monty,
                 inputs=inputs,
-                external_functions=externals,  # Changed from: externals=externals
-                os=os_access,  # Changed from: os_access=os_access
-                limits=parsed_limits,  # Added: pass limits here
+                external_functions=externals,
+                os=os_access,
+                limits=parsed_limits,
             )
             success = True
             error_msg = None
