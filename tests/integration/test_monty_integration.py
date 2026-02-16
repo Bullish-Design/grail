@@ -37,8 +37,12 @@ async def double(n: int) -> int:
     async def double_impl(n: int) -> int:
         return n * 2
 
-    m = pydantic_monty.Monty(code, type_check_stubs=stubs, inputs={"x": 5})
-    result = await pydantic_monty.run_monty_async(m, external_functions={"double": double_impl})
+    m = pydantic_monty.Monty(
+        code, type_check_stubs=stubs, inputs=["x"], external_functions=["double"]
+    )
+    result = await pydantic_monty.run_monty_async(
+        m, inputs={"x": 5}, external_functions={"double": double_impl}
+    )
 
     assert result == 10
 
