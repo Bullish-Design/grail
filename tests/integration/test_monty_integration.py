@@ -14,7 +14,7 @@ def test_basic_monty_execution():
     code = "x = 1 + 2\nx"
 
     m = pydantic_monty.Monty(code)
-    result = pydantic_monty.run_monty(m, inputs={})
+    result = m.run(inputs=None)
 
     assert result == 3
 
@@ -37,10 +37,8 @@ async def double(n: int) -> int:
     async def double_impl(n: int) -> int:
         return n * 2
 
-    m = pydantic_monty.Monty(code, type_check_stubs=stubs)
-    result = await pydantic_monty.run_monty_async(
-        m, inputs={"x": 5}, externals={"double": double_impl}
-    )
+    m = pydantic_monty.Monty(code, type_check_stubs=stubs, inputs={"x": 5})
+    result = await pydantic_monty.run_monty_async(m, external_functions={"double": double_impl})
 
     assert result == 10
 
@@ -51,13 +49,16 @@ def test_monty_with_resource_limits():
     code = "x = 1\nx"
 
     m = pydantic_monty.Monty(
-        code,
-        max_memory=1024 * 1024,  # 1MB
-        max_duration_secs=1.0,
-        max_recursion_depth=100,
+        code
+        # max_memory=1024 * 1024,  # 1MB
+        # max_duration_secs=1.0,
+        # max_recursion_depth=100,
     )
 
-    result = pydantic_monty.run_monty(m, inputs={})
+    result = m.run(
+        inputs=None,
+        limits={"max_memory": 1024 * 1024, "max_duration_secs": 1.0, "max_recursion_depth": 100},
+    )
     assert result == 1
 
 
@@ -88,7 +89,7 @@ async def test_monty_error_handling():
     m = pydantic_monty.Monty(code)
 
     with pytest.raises(Exception) as exc_info:
-        await pydantic_monty.run_monty_async(m, inputs={})
+        await pydantic_monty.run_monty_async(m, inputs=None)
 
     # Should get some kind of error about undefined variable
     assert "undefined" in str(exc_info.value).lower() or "name" in str(exc_info.value).lower()
