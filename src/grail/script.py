@@ -348,7 +348,8 @@ class GrailScript:
             self.monty_code,
             type_check=True,
             type_check_stubs=self.stubs,
-            inputs=[inputs],
+            inputs=list(self.inputs.keys()),  # Pass list of input names
+            external_functions=list(self.externals.keys()),  # Pass list of external function names
         )
 
         # Start execution (this will pause on first external call)

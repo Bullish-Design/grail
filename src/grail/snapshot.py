@@ -46,11 +46,6 @@ class Snapshot:
         return self._monty_snapshot.kwargs
 
     @property
-    def is_complete(self) -> bool:
-        """Whether execution has finished."""
-        return self._monty_snapshot.is_complete
-
-    @property
     def call_id(self) -> int:
         """Unique identifier for this external call."""
         return getattr(self._monty_snapshot, "call_id", 0)
@@ -66,8 +61,8 @@ class Snapshot:
         Raises:
             RuntimeError: If execution not complete
         """
-        if not self.is_complete:
-            raise RuntimeError("Execution not complete")
+        # if not self.is_complete:
+        #    raise RuntimeError("Execution not complete")
         return self._monty_snapshot.value
 
     def resume(
