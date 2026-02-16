@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from grail.script import load
+from grail.script import load, GrailScript
 from grail.errors import InputError, ExternalError
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
@@ -117,3 +117,28 @@ def test_load_creates_artifacts(tmp_path):
     assert (artifacts_dir / "stubs.pyi").exists()
     assert (artifacts_dir / "monty_code.py").exists()
     assert (artifacts_dir / "check.json").exists()
+
+
+def test_map_error_to_pym_uses_source_map():
+    """_map_error_to_pym should translate Monty line numbers to .pym line numbers."""
+    from grail._types import SourceMap
+
+    source_map = SourceMap()
+    source_map.add_mapping(pym_line=10, monty_line=3)
+
+    script = GrailScript(
+        path=FIXTURES_DIR / "simple.pym",
+        externals={},
+        inputs={},
+        monty_code="",
+        stubs="",
+        source_map=source_map,
+        limits=None,
+        files=None,
+        grail_dir=None,
+    )
+
+    error = RuntimeError("Monty failed at line 3")
+    mapped = script._map_error_to_pym(error)
+
+    assert mapped.lineno == 10

@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable
 import time
+import re
 
 try:
     import pydantic_monty
@@ -185,8 +186,11 @@ class GrailScript:
         error_msg_lower = error_msg.lower()
 
         # Try to extract line number from Monty error
-        # (This is simplified - real implementation would parse Monty's traceback)
+        match = re.search(r"line (\d+)", error_msg, re.IGNORECASE)
         lineno = None
+        if match:
+            monty_line = int(match.group(1))
+            lineno = self.source_map.monty_to_pym.get(monty_line, monty_line)
 
         # Heuristic: infer limit type from Monty error message keywords.
         limit_type = None
