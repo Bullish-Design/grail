@@ -138,3 +138,17 @@ class Snapshot:
 
         monty_snapshot = pydantic_monty.MontySnapshot.load(data)
         return Snapshot(monty_snapshot, source_map, externals)
+
+    @property
+    def is_complete(self) -> bool:
+        """
+        Check if execution is complete.
+
+        Returns:
+            True if execution finished, False if paused
+        """
+
+        if pydantic_monty is None:
+            return False
+
+        return isinstance(self._monty_snapshot, pydantic_monty.MontyComplete)

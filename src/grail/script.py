@@ -234,14 +234,23 @@ class GrailScript:
         parsed_limits = self._prepare_monty_limits(limits)
         os_access = self._prepare_monty_files(files)
 
-        # Create Monty instance
-        monty = pydantic_monty.Monty(
-            self.monty_code,
-            type_check=True,
-            type_check_stubs=self.stubs,
-            inputs=list(self.inputs.keys()),  # Add: list of input names
-            external_functions=list(self.externals.keys()),  # Add: list of external function names
-        )
+        # Create Monty instance - catch type errors during construction
+        try:
+            monty = pydantic_monty.Monty(
+                self.monty_code,
+                type_check=True,
+                type_check_stubs=self.stubs,
+                inputs=list(self.inputs.keys()),
+                external_functions=list(self.externals.keys()),
+            )
+        except pydantic_monty.MontyTypingError as e:
+            # Convert type errors to ExecutionError
+            raise ExecutionError(
+                f"Type checking failed: {str(e)}",
+                lineno=None,
+                source_context=None,
+                suggestion="Fix type errors in your code",
+            ) from e
 
         # Execute
         start_time = time.time()
@@ -435,6 +444,6 @@ async def run(code: str, inputs: dict[str, Any] | None = None) -> Any:
 
     inputs = inputs or {}
 
-    monty = pydantic_monty.Monty(code)
+    monty = pydantic_monty.Monty(code, inputs=list(inputs.keys()))
     result = await pydantic_monty.run_monty_async(monty, inputs=inputs)
     return result

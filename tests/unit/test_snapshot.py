@@ -23,7 +23,7 @@ def test_snapshot_basic_properties():
     # Should be paused on first external call
     assert snapshot.function_name == "double"
     assert snapshot.args == () or 5 in snapshot.args or snapshot.kwargs.get("n") == 5
-    # assert snapshot.is_complete is False
+    assert snapshot.is_complete is False
 
 
 @pytest.mark.integration
@@ -40,7 +40,7 @@ def test_snapshot_resume():
     result_snapshot = snapshot.resume(return_value=10)
 
     # Should be complete now
-    # assert result_snapshot.is_complete is True
+    assert result_snapshot.is_complete is True
     assert result_snapshot.value == 10
 
 
@@ -64,4 +64,4 @@ def test_snapshot_serialization():
     restored = Snapshot.load(data, script.source_map, {"double": double_impl})
 
     assert restored.function_name == snapshot.function_name
-    # assert restored.is_complete == snapshot.is_complete
+    assert restored.is_complete == snapshot.is_complete
