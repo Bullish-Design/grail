@@ -76,7 +76,7 @@ from pathlib import Path
 
 
 def main(inputs=None):
-    Path(r"{output_path}").write_text(json.dumps(inputs or {}))
+    Path(r"{output_path}").write_text(json.dumps(inputs or {{}}))
 """.format(output_path=str(output_file))
     )
 
