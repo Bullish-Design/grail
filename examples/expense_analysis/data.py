@@ -27,7 +27,7 @@ async def get_expenses(user_id: int) -> dict[str, Any]:
 
 async def get_custom_budget(user_id: int) -> dict[str, Any] | None:
     """Mock implementation of get_custom_budget."""
-    # Alice has a custom budget
+    # Alice has a custom budget.
     if user_id == 1:
         return {"limit": 6000.0}
     return None
