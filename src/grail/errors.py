@@ -83,15 +83,31 @@ class ExecutionError(GrailError):
             parts.append(f"Line {self.lineno}")
         parts.append(self.message)
 
-        msg = " — ".join(parts)
-
-        if self.source_context:
-            msg += f"\n\n{self.source_context}"
+        if self.source_context and self.lineno is not None:
+            context_lines = self._build_context_display(
+                source=self.source_context,
+                error_line=self.lineno,
+                context=2,
+            )
+            parts.append("")
+            parts.append(context_lines)
 
         if self.suggestion:
-            msg += f"\n\nSuggestion: {self.suggestion}"
+            parts.append(f"Suggestion: {self.suggestion}")
 
-        return msg
+        return "\n".join(parts)
+
+    def _build_context_display(self, source: str, error_line: int, context: int = 2) -> str:
+        lines = source.splitlines()
+        start = max(0, error_line - context - 1)
+        end = min(len(lines), error_line + context)
+
+        output = []
+        for i in range(start, end):
+            line_num = i + 1
+            prefix = "> " if line_num == error_line else "  "
+            output.append(f"{prefix}{line_num:>4} | {lines[i]}")
+        return "\n".join(output)
 
 
 class LimitError(ExecutionError):

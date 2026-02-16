@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable
 import time
+import re
 
 try:
     import pydantic_monty
@@ -39,6 +40,7 @@ class GrailScript:
         monty_code: str,
         stubs: str,
         source_map: SourceMap,
+        source_lines: list[str],
         limits: dict[str, Any] | None = None,
         files: dict[str, str | bytes] | None = None,
         grail_dir: Path | None = None,
@@ -53,6 +55,7 @@ class GrailScript:
             monty_code: Generated Monty code
             stubs: Generated type stubs
             source_map: Line number mapping
+            source_lines: .pym source lines
             limits: Resource limits
             files: Virtual filesystem files
             grail_dir: Directory for artifacts (None disables)
@@ -64,6 +67,7 @@ class GrailScript:
         self.monty_code = monty_code
         self.stubs = stubs
         self.source_map = source_map
+        self.source_lines = source_lines
         self.limits = limits
         self.files = files
         self.grail_dir = grail_dir
@@ -185,8 +189,11 @@ class GrailScript:
         error_msg_lower = error_msg.lower()
 
         # Try to extract line number from Monty error
-        # (This is simplified - real implementation would parse Monty's traceback)
+        match = re.search(r"line (\d+)", error_msg, re.IGNORECASE)
         lineno = None
+        if match:
+            monty_line = int(match.group(1))
+            lineno = self.source_map.monty_to_pym.get(monty_line, monty_line)
 
         # Heuristic: infer limit type from Monty error message keywords.
         limit_type = None
@@ -201,7 +208,10 @@ class GrailScript:
         if "limit" in error_msg_lower or limit_type is not None:
             return LimitError(error_msg, limit_type=limit_type)
 
-        return ExecutionError(error_msg, lineno=lineno, source_context=None, suggestion=None)
+        source_context = "\n".join(self.source_lines) if self.source_lines else None
+        return ExecutionError(
+            error_msg, lineno=lineno, source_context=source_context, suggestion=None
+        )
 
     async def run(
         self,
@@ -432,6 +442,7 @@ def load(
         monty_code=monty_code,
         stubs=stubs,
         source_map=source_map,
+        source_lines=parse_result.source_lines,
         limits=limits,
         files=files,
         grail_dir=grail_dir_path,

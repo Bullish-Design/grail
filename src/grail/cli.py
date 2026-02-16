@@ -3,6 +3,7 @@
 import argparse
 import sys
 import json
+import inspect
 from pathlib import Path
 from typing import List
 
@@ -157,6 +158,14 @@ def cmd_run(args):
         print(f"Error: {script_path} not found")
         return 1
 
+    inputs = {}
+    for item in args.input:
+        if "=" not in item:
+            print(f"Error: Invalid input format '{item}'. Use key=value.")
+            return 1
+        key, value = item.split("=", 1)
+        inputs[key.strip()] = value.strip()
+
     # Load host file if provided
     if args.host:
         host_path = Path(args.host)
@@ -171,10 +180,38 @@ def cmd_run(args):
 
         # Run host's main()
         if hasattr(host_module, "main"):
-            if asyncio.iscoroutinefunction(host_module.main):
-                asyncio.run(host_module.main())
+            main_fn = host_module.main
+            call_args = ()
+            call_kwargs = {}
+            if inputs:
+                try:
+                    signature = inspect.signature(main_fn)
+                except (TypeError, ValueError):
+                    call_args = (inputs,)
+                else:
+                    parameters = signature.parameters
+                    accepts_var_kw = any(
+                        param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()
+                    )
+                    accepts_var_pos = any(
+                        param.kind == inspect.Parameter.VAR_POSITIONAL
+                        for param in parameters.values()
+                    )
+                    if "inputs" in parameters or accepts_var_kw:
+                        call_kwargs = {"inputs": inputs}
+                    elif accepts_var_pos or parameters:
+                        call_args = (inputs,)
+                    else:
+                        print(
+                            "Error: Host main() does not accept inputs. "
+                            "Remove --input or update its signature."
+                        )
+                        return 1
+
+            if asyncio.iscoroutinefunction(main_fn):
+                asyncio.run(main_fn(*call_args, **call_kwargs))
             else:
-                host_module.main()
+                main_fn(*call_args, **call_kwargs)
         else:
             print("Error: Host file must define a main() function")
             return 1
@@ -250,6 +287,13 @@ def main():
     parser_run = subparsers.add_parser("run", help="Run a .pym file")
     parser_run.add_argument("file", help=".pym file to run")
     parser_run.add_argument("--host", help="Host Python file with main() function")
+    parser_run.add_argument(
+        "--input",
+        "-i",
+        action="append",
+        default=[],
+        help="Input value as key=value (can be repeated)",
+    )
     parser_run.set_defaults(func=cmd_run)
 
     # grail watch

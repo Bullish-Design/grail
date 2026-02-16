@@ -4,8 +4,11 @@ import pytest
 from pathlib import Path
 import tempfile
 import os
+import json
+import subprocess
+import sys
 
-from grail.cli import cmd_init, cmd_check, cmd_clean
+from grail.cli import cmd_init, cmd_check, cmd_clean, cmd_run
 import argparse
 
 
@@ -57,3 +60,65 @@ def test_cmd_clean_removes_directory(tmp_path, monkeypatch):
     cmd_clean(args)
 
     assert not grail_dir.exists()
+
+
+def test_run_parses_input_flag(tmp_path):
+    """The --input flag should parse key=value pairs into a dict."""
+    pym_file = tmp_path / "analysis.pym"
+    pym_file.write_text("result = 1")
+
+    output_file = tmp_path / "inputs.json"
+    host_file = tmp_path / "host.py"
+    host_file.write_text(
+        """
+import json
+from pathlib import Path
+
+
+def main(inputs=None):
+    Path(r"{output_path}").write_text(json.dumps(inputs or {}))
+""".format(output_path=str(output_file))
+    )
+
+    args = argparse.Namespace(
+        file=str(pym_file),
+        host=str(host_file),
+        input=["budget=5000", "dept=engineering"],
+    )
+
+    result = cmd_run(args)
+
+    assert result == 0
+    assert json.loads(output_file.read_text()) == {
+        "budget": "5000",
+        "dept": "engineering",
+    }
+
+
+def test_run_rejects_invalid_input_format(tmp_path, capsys):
+    """An --input value without '=' should produce an error."""
+    pym_file = tmp_path / "analysis.pym"
+    pym_file.write_text("result = 1")
+
+    args = argparse.Namespace(
+        file=str(pym_file),
+        host=str(tmp_path / "host.py"),
+        input=["invalid_no_equals"],
+    )
+
+    result = cmd_run(args)
+    captured = capsys.readouterr()
+
+    assert result == 1
+    assert "Invalid input format" in captured.out
+
+
+def test_run_input_flag_appears_in_help():
+    """The --input flag should appear in the grail run help text."""
+    result = subprocess.run(
+        [sys.executable, "-m", "grail", "run", "--help"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert "--input" in result.stdout
