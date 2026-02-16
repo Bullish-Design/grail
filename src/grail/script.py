@@ -236,14 +236,22 @@ class GrailScript:
 
         # Create Monty instance
         monty = pydantic_monty.Monty(
-            self.monty_code, type_check=True, type_check_stubs=self.stubs, **parsed_limits
+            self.monty_code,
+            type_check=True,
+            type_check_stubs=self.stubs,
+            inputs=list(self.inputs.keys()),  # Add: list of input names
+            external_functions=list(self.externals.keys()),  # Add: list of external function names
         )
 
         # Execute
         start_time = time.time()
         try:
             result = await pydantic_monty.run_monty_async(
-                monty, inputs=inputs, externals=externals, os_access=os_access
+                monty,
+                inputs=inputs,
+                external_functions=externals,  # Changed from: externals=externals
+                os=os_access,  # Changed from: os_access=os_access
+                limits=parsed_limits,  # Added: pass limits here
             )
             success = True
             error_msg = None

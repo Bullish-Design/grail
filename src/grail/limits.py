@@ -98,25 +98,22 @@ def parse_duration_string(value: str) -> float:
 
 def parse_limits(limits: dict[str, Any]) -> dict[str, Any]:
     """
-    Parse limits dict, converting string formats to native types.
-
-    Args:
-        limits: Raw limits dict (may contain string formats)
-
-    Returns:
-        Parsed limits dict with native types
-
-    Examples:
-        {"max_memory": "16mb"} -> {"max_memory": 16777216}
-        {"max_duration": "2s"} -> {"max_duration": 2.0}
+    Parse limits dict, converting string formats to native types
+    and translating key names to Monty format.
     """
     parsed: dict[str, Any] = {}
 
     for key, value in limits.items():
         if key == "max_memory" and isinstance(value, str):
-            parsed[key] = parse_memory_string(value)
+            parsed["max_memory"] = parse_memory_string(value)
+        elif key == "max_memory":
+            parsed["max_memory"] = value
         elif key == "max_duration" and isinstance(value, str):
-            parsed[key] = parse_duration_string(value)
+            parsed["max_duration_secs"] = parse_duration_string(value)  # Key renamed
+        elif key == "max_duration":
+            parsed["max_duration_secs"] = float(value)  # Key renamed
+        elif key == "max_recursion":
+            parsed["max_recursion_depth"] = value  # Key renamed
         else:
             parsed[key] = value
 

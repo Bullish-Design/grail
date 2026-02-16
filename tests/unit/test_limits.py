@@ -56,8 +56,8 @@ def test_parse_limits() -> None:
     parsed = parse_limits(raw)
 
     assert parsed["max_memory"] == 16 * 1024 * 1024
-    assert parsed["max_duration"] == 2.0
-    assert parsed["max_recursion"] == 200
+    assert parsed["max_duration_secs"] == 2.0
+    assert parsed["max_recursion_depth"] == 200
 
 
 def test_merge_limits() -> None:
@@ -68,8 +68,8 @@ def test_merge_limits() -> None:
     merged = merge_limits(base, override)
 
     assert merged["max_memory"] == 16 * 1024 * 1024
-    assert merged["max_duration"] == 5.0
-    assert merged["max_recursion"] == 200
+    assert merged["max_duration_secs"] == 5.0
+    assert merged["max_recursion_depth"] == 200
 
 
 def test_presets_are_dicts() -> None:
