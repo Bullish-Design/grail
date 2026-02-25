@@ -1,5 +1,7 @@
 # Grail v2 — Comprehensive Code Review
 
+> **Status:** This review was completed prior to the v3 refactor. All issues identified below have been addressed in Grail v3. See [CODE_REVIEW_REFACTOR_GUIDE.md](./CODE_REVIEW_REFACTOR_GUIDE.md) for the detailed implementation plan.
+
 **Reviewer:** AI Code Review Agent
 **Date:** 2026-02-25
 **Scope:** Full codebase review against `GRAIL_CONCEPT.md` spec and `pydantic_monty` API

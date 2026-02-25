@@ -91,3 +91,29 @@ class CheckResult:
     errors: list[CheckMessage]
     warnings: list[CheckMessage]
     info: dict[str, Any]
+
+
+@dataclass
+class ScriptEvent:
+    """Structured event emitted during script execution.
+
+    Event types:
+    - "run_start": Script execution beginning
+    - "run_complete": Script execution finished successfully
+    - "run_error": Script execution failed
+    - "print": Print output from inside the Monty sandbox
+    - "check_start": Validation check beginning
+    - "check_complete": Validation check finished
+    """
+
+    type: Literal[
+        "run_start", "run_complete", "run_error", "print", "check_start", "check_complete"
+    ]
+    script_name: str
+    timestamp: float
+    text: str | None = None
+    duration_ms: float | None = None
+    error: str | None = None
+    input_count: int | None = None
+    external_count: int | None = None
+    result_summary: str | None = None

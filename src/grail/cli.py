@@ -7,6 +7,7 @@ import inspect
 from pathlib import Path
 from typing import List
 
+import grail
 from grail.script import load
 from grail.artifacts import ArtifactsManager
 from grail.errors import GrailError, ParseError
@@ -184,12 +185,16 @@ def cmd_run(args):
     import importlib.util
 
     try:
-        # Load the .pym script
+        # Load and validate the .pym script
         script_path = Path(args.file)
         if not script_path.exists():
             print(f"Error: {script_path} not found", file=sys.stderr)
             return 1
 
+        # Load the .pym script first (validates it)
+        script = grail.load(script_path, grail_dir=None)
+
+        # Parse inputs
         inputs = {}
         for item in args.input:
             if "=" not in item:
@@ -213,42 +218,13 @@ def cmd_run(args):
             host_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(host_module)
 
-            # Run host's main()
+            # Run host's main() - always pass script and inputs as kwargs
             if hasattr(host_module, "main"):
                 main_fn = host_module.main
-                call_args = ()
-                call_kwargs = {}
-                if inputs:
-                    try:
-                        signature = inspect.signature(main_fn)
-                    except (TypeError, ValueError):
-                        call_args = (inputs,)
-                    else:
-                        parameters = signature.parameters
-                        accepts_var_kw = any(
-                            param.kind == inspect.Parameter.VAR_KEYWORD
-                            for param in parameters.values()
-                        )
-                        accepts_var_pos = any(
-                            param.kind == inspect.Parameter.VAR_POSITIONAL
-                            for param in parameters.values()
-                        )
-                        if "inputs" in parameters or accepts_var_kw:
-                            call_kwargs = {"inputs": inputs}
-                        elif accepts_var_pos or parameters:
-                            call_args = (inputs,)
-                        else:
-                            print(
-                                "Error: Host main() does not accept inputs. "
-                                "Remove --input or update its signature.",
-                                file=sys.stderr,
-                            )
-                            return 1
-
                 if asyncio.iscoroutinefunction(main_fn):
-                    asyncio.run(main_fn(*call_args, **call_kwargs))
+                    asyncio.run(main_fn(script=script, inputs=inputs))
                 else:
-                    main_fn(*call_args, **call_kwargs)
+                    main_fn(script=script, inputs=inputs)
             else:
                 print("Error: Host file must define a main() function", file=sys.stderr)
                 return 1

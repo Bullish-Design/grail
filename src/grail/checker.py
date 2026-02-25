@@ -180,6 +180,110 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def check_declarations(parse_result: ParseResult) -> list[CheckMessage]:
+    """Check that @external and Input() declarations are well-formed.
+
+    Errors detected:
+    - E006: Missing type annotations on @external parameters or return type
+    - E007: @external with non-ellipsis body
+    - E008: Input() without type annotation
+
+    Args:
+        parse_result: Result of parsing a .pym file.
+
+    Returns:
+        List of error messages.
+    """
+    errors: list[CheckMessage] = []
+
+    for ext in parse_result.externals.values():
+        if ext.return_type == "<missing>":
+            errors.append(
+                CheckMessage(
+                    code="E006",
+                    lineno=ext.lineno,
+                    col_offset=ext.col_offset,
+                    end_lineno=None,
+                    end_col_offset=None,
+                    severity="error",
+                    message=f"External function '{ext.name}' missing return type annotation",
+                    suggestion=f"Add a return type annotation: async def {ext.name}(...) -> ReturnType:",
+                )
+            )
+        for param in ext.parameters:
+            if param.type_annotation == "<missing>":
+                errors.append(
+                    CheckMessage(
+                        code="E006",
+                        lineno=ext.lineno,
+                        col_offset=ext.col_offset,
+                        end_lineno=None,
+                        end_col_offset=None,
+                        severity="error",
+                        message=f"Parameter '{param.name}' in external function '{ext.name}' missing type annotation",
+                        suggestion=f"Add a type annotation: {param.name}: type",
+                    )
+                )
+
+    for node in parse_result.ast_module.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        has_external = any(
+            (isinstance(d, ast.Name) and d.id == "external")
+            or (isinstance(d, ast.Attribute) and d.attr == "external")
+            for d in node.decorator_list
+        )
+        if not has_external:
+            continue
+
+        body_start = 0
+        if (
+            node.body
+            and isinstance(node.body[0], ast.Expr)
+            and isinstance(node.body[0].value, ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        ):
+            body_start = 1
+
+        remaining = node.body[body_start:]
+        is_valid_body = (
+            len(remaining) == 1
+            and isinstance(remaining[0], ast.Expr)
+            and isinstance(remaining[0].value, ast.Constant)
+            and remaining[0].value.value is Ellipsis
+        )
+        if not is_valid_body:
+            errors.append(
+                CheckMessage(
+                    code="E007",
+                    lineno=node.lineno,
+                    col_offset=node.col_offset,
+                    end_lineno=node.end_lineno,
+                    end_col_offset=node.end_col_offset,
+                    severity="error",
+                    message=f"External function '{node.name}' body must be '...' (Ellipsis), not actual code",
+                    suggestion="Replace the function body with: ...",
+                )
+            )
+
+    for inp in parse_result.inputs.values():
+        if inp.type_annotation == "<missing>":
+            errors.append(
+                CheckMessage(
+                    code="E008",
+                    lineno=inp.lineno,
+                    col_offset=inp.col_offset,
+                    end_lineno=None,
+                    end_col_offset=None,
+                    severity="error",
+                    message=f"Input '{inp.name}' missing type annotation",
+                    suggestion=f'Add a type annotation: {inp.name}: type = Input("{inp.name}")',
+                )
+            )
+
+    return errors
+
+
 def check_for_warnings(parse_result: ParseResult) -> list[CheckMessage]:
     """Check for warning conditions (non-blocking issues).
 
@@ -233,6 +337,48 @@ def check_for_warnings(parse_result: ParseResult) -> list[CheckMessage]:
             )
         )
 
+    # W002: Unused @external functions
+    external_names = set(parse_result.externals.keys())
+    input_names = set(parse_result.inputs.keys())
+
+    referenced_names: set[str] = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            referenced_names.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            referenced_names.add(node.attr)
+
+    for name, spec in parse_result.externals.items():
+        if name not in referenced_names:
+            warnings.append(
+                CheckMessage(
+                    code="W002",
+                    lineno=spec.lineno,
+                    col_offset=spec.col_offset,
+                    end_lineno=None,
+                    end_col_offset=None,
+                    severity="warning",
+                    message=f"External function '{name}' is declared but never called",
+                    suggestion=f"Remove the @external declaration for '{name}' if it's not needed",
+                )
+            )
+
+    # W003: Unused Input() variables
+    for name, spec in parse_result.inputs.items():
+        if name not in referenced_names:
+            warnings.append(
+                CheckMessage(
+                    code="W003",
+                    lineno=spec.lineno,
+                    col_offset=spec.col_offset,
+                    end_lineno=None,
+                    end_col_offset=None,
+                    severity="warning",
+                    message=f"Input '{name}' is declared but never referenced",
+                    suggestion=f"Remove the Input() declaration for '{name}' if it's not needed",
+                )
+            )
+
     return warnings
 
 
@@ -248,6 +394,9 @@ def check_pym(parse_result: ParseResult) -> CheckResult:
     checker = MontyCompatibilityChecker(parse_result.source_lines)
     checker.visit(parse_result.ast_module)
 
+    declaration_errors = check_declarations(parse_result)
+    all_errors = checker.errors + declaration_errors
+
     warnings = check_for_warnings(parse_result)
     warnings.extend(checker.warnings)
 
@@ -260,8 +409,8 @@ def check_pym(parse_result: ParseResult) -> CheckResult:
 
     return CheckResult(
         file="<unknown>",
-        valid=len(checker.errors) == 0,
-        errors=checker.errors,
+        valid=len(all_errors) == 0,
+        errors=all_errors,
         warnings=warnings,
         info=info,
     )

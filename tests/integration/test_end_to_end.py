@@ -205,3 +205,43 @@ y = undefined_variable
 
     finally:
         pym_path.unlink()
+
+
+@pytest.mark.asyncio
+async def test_print_callback_captures_output():
+    """print_callback receives output from print() inside Monty."""
+    output = []
+
+    def capture(stream, text):
+        output.append(text)
+
+    result = await grail.run(
+        'print("hello from monty")\n42',
+        print_callback=capture,
+    )
+
+    assert result == 42
+    stdout = "".join(output)
+    assert "hello from monty" in stdout
+
+
+@pytest.mark.asyncio
+async def test_on_event_receives_lifecycle_events():
+    """on_event callback receives structured lifecycle events."""
+    # This test requires a .pym file — use the fixture
+    script = grail.load("tests/fixtures/simple.pym", grail_dir=None)
+
+    events = []
+
+    async def mock_external(x):
+        return x * 2
+
+    result = await script.run(
+        inputs={"x": 5},
+        externals={"double": mock_external},
+        on_event=lambda e: events.append(e),
+    )
+
+    event_types = [e.type for e in events]
+    assert "run_start" in event_types
+    assert "run_complete" in event_types

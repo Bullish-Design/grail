@@ -113,3 +113,86 @@ result = "hello"
     result = check_pym(parsed)
 
     assert "async_await" not in result.info.get("monty_features_used", [])
+
+
+def test_e006_missing_return_type() -> None:
+    """E006: External function missing return type annotation."""
+    content = """from grail import external
+@external
+async def fetch(id: int):
+    ...
+"""
+    parse_result = parse_pym_content(content)
+    result = check_pym(parse_result)
+    assert not result.valid
+    assert any(e.code == "E006" for e in result.errors)
+
+
+def test_e006_missing_param_annotation() -> None:
+    """E006: External function parameter missing type annotation."""
+    content = """from grail import external
+@external
+async def fetch(id) -> str:
+    ...
+"""
+    parse_result = parse_pym_content(content)
+    result = check_pym(parse_result)
+    assert not result.valid
+    assert any(e.code == "E006" for e in result.errors)
+
+
+def test_e007_non_ellipsis_body() -> None:
+    """E007: External function with actual code body."""
+    content = """from grail import external
+@external
+async def fetch(id: int) -> str:
+    return "hello"
+"""
+    parse_result = parse_pym_content(content)
+    result = check_pym(parse_result)
+    assert not result.valid
+    assert any(e.code == "E007" for e in result.errors)
+
+
+def test_e008_input_missing_annotation() -> None:
+    """E008: Input() without type annotation."""
+    content = """from grail import Input
+x = Input("x")
+"""
+    parse_result = parse_pym_content(content)
+    result = check_pym(parse_result)
+    assert not result.valid
+    assert any(e.code == "E008" for e in result.errors)
+
+
+def test_w002_unused_external() -> None:
+    """W002: Declared @external function never called."""
+    content = """from grail import external
+
+@external
+async def fetch(id: int) -> str:
+    ...
+
+# Never calls fetch()
+x = 42
+x
+"""
+    parse_result = parse_pym_content(content)
+    result = check_pym(parse_result)
+    assert any(w.code == "W002" for w in result.warnings)
+
+
+def test_w003_unused_input() -> None:
+    """W003: Declared Input() variable never referenced."""
+    content = """from grail import Input
+
+x: int = Input("x")
+y: int = Input("y")
+
+# Only uses x, not y
+x + 1
+"""
+    parse_result = parse_pym_content(content)
+    result = check_pym(parse_result)
+    assert any(w.code == "W003" and "y" in w.message for w in result.warnings)
+    assert not any(w.code == "W003" and "x" in w.message for w in result.warnings)

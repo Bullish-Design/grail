@@ -44,7 +44,7 @@ def test_parse_multiple_externals() -> None:
 
 
 def test_missing_type_annotation_raises() -> None:
-    """Missing type annotation should raise CheckError."""
+    """Missing type annotation should NOT raise during parsing - handled by checker."""
     content = """
 from grail import external
 
@@ -52,12 +52,19 @@ from grail import external
 def bad_func(x):
     ...
 """
-    with pytest.raises(CheckError, match="missing return type annotation"):
-        parse_pym_content(content)
+    # Parser should now succeed (lenient)
+    result = parse_pym_content(content)
+    assert "bad_func" in result.externals
+    # But the checker should catch this as E006
+    from grail.checker import check_pym
+
+    check_result = check_pym(result)
+    assert not check_result.valid
+    assert any(e.code == "E006" for e in check_result.errors)
 
 
 def test_missing_return_type_raises() -> None:
-    """Missing return type should raise CheckError."""
+    """Missing return type should NOT raise during parsing - handled by checker."""
     content = """
 from grail import external
 
@@ -65,12 +72,17 @@ from grail import external
 def bad_func(x: int):
     ...
 """
-    with pytest.raises(CheckError, match="missing return type annotation"):
-        parse_pym_content(content)
+    result = parse_pym_content(content)
+    assert "bad_func" in result.externals
+    from grail.checker import check_pym
+
+    check_result = check_pym(result)
+    assert not check_result.valid
+    assert any(e.code == "E006" for e in check_result.errors)
 
 
 def test_non_ellipsis_body_raises() -> None:
-    """Non-ellipsis body should raise CheckError."""
+    """Non-ellipsis body should NOT raise during parsing - handled by checker."""
     content = """
 from grail import external
 
@@ -78,19 +90,29 @@ from grail import external
 def bad_func(x: int) -> int:
     return x * 2
 """
-    with pytest.raises(CheckError, match="body must be"):
-        parse_pym_content(content)
+    result = parse_pym_content(content)
+    assert "bad_func" in result.externals
+    from grail.checker import check_pym
+
+    check_result = check_pym(result)
+    assert not check_result.valid
+    assert any(e.code == "E007" for e in check_result.errors)
 
 
 def test_input_without_annotation_raises() -> None:
-    """Input without type annotation should raise CheckError."""
+    """Input without type annotation should NOT raise during parsing - handled by checker."""
     content = """
 from grail import Input
 
 x = Input("x")
 """
-    with pytest.raises(CheckError, match="type annotation"):
-        parse_pym_content(content)
+    result = parse_pym_content(content)
+    assert "x" in result.inputs
+    from grail.checker import check_pym
+
+    check_result = check_pym(result)
+    assert not check_result.valid
+    assert any(e.code == "E008" for e in check_result.errors)
 
 
 def test_syntax_error_raises_parse_error() -> None:

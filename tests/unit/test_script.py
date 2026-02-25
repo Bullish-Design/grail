@@ -37,13 +37,12 @@ def test_validate_inputs_missing_required():
         script._validate_inputs({})
 
 
-def test_validate_inputs_extra_input_warns(capsys):
+def test_validate_inputs_extra_input_warns():
     """Should warn for extra inputs."""
     script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
 
-    script._validate_inputs({"x": 1, "extra": 2})
-    captured = capsys.readouterr()
-    assert "Extra input 'extra'" in captured.out
+    with pytest.warns(UserWarning, match="Extra input"):
+        script._validate_inputs({"x": 1, "extra": 2})
 
 
 def test_validate_externals_missing():
@@ -54,13 +53,12 @@ def test_validate_externals_missing():
         script._validate_externals({})
 
 
-def test_validate_externals_extra_warns(capsys):
+def test_validate_externals_extra_warns():
     """Should warn for extra externals."""
     script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
 
-    script._validate_externals({"double": lambda x: x * 2, "extra": lambda: None})
-    captured = capsys.readouterr()
-    assert "Extra external 'extra'" in captured.out
+    with pytest.warns(UserWarning, match="Extra external"):
+        script._validate_externals({"double": lambda x: x * 2, "extra": lambda: None})
 
 
 @pytest.mark.asyncio

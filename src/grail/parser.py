@@ -10,19 +10,22 @@ from grail._types import ExternalSpec, InputSpec, ParamSpec, ParseResult
 from grail.errors import CheckError, ParseError
 
 
-def get_type_annotation_str(node: ast.expr | None) -> str:
+def get_type_annotation_str(node: ast.expr | None, lenient: bool = False) -> str:
     """Convert AST type annotation node to string.
 
     Args:
         node: AST annotation node.
+        lenient: If True, return "<missing>" instead of raising CheckError.
 
     Returns:
         String representation of type (e.g., "int", "dict[str, Any]").
 
     Raises:
-        CheckError: If annotation is missing or invalid.
+        CheckError: If annotation is missing or invalid (only when lenient=False).
     """
     if node is None:
+        if lenient:
+            return "<missing>"
         raise CheckError("Missing type annotation")
 
     return ast.unparse(node)
@@ -38,9 +41,6 @@ def extract_function_params(
 
     Returns:
         List of parameter specifications.
-
-    Raises:
-        CheckError: If parameters lack type annotations.
     """
     params: list[ParamSpec] = []
     args = func_node.args.args
@@ -49,11 +49,7 @@ def extract_function_params(
         if arg.arg == "self":
             continue
 
-        if arg.annotation is None:
-            raise CheckError(
-                f"Parameter '{arg.arg}' in function '{func_node.name}' missing type annotation",
-                lineno=func_node.lineno,
-            )
+        annotation_str = get_type_annotation_str(arg.annotation, lenient=True)
 
         default = None
         num_defaults = len(func_node.args.defaults)
@@ -70,7 +66,7 @@ def extract_function_params(
         params.append(
             ParamSpec(
                 name=arg.arg,
-                type_annotation=get_type_annotation_str(arg.annotation),
+                type_annotation=annotation_str,
                 default=default,
             )
         )
@@ -165,7 +161,6 @@ def extract_externals(module: ast.Module) -> dict[str, ExternalSpec]:
         if not has_external:
             continue
 
-        validate_external_function(node)
         params = extract_function_params(node)
         docstring = ast.get_docstring(node)
 
@@ -173,7 +168,7 @@ def extract_externals(module: ast.Module) -> dict[str, ExternalSpec]:
             name=node.name,
             is_async=isinstance(node, ast.AsyncFunctionDef),
             parameters=params,
-            return_type=get_type_annotation_str(node.returns),
+            return_type=get_type_annotation_str(node.returns, lenient=True),
             docstring=docstring,
             lineno=node.lineno,
             col_offset=node.col_offset,
@@ -214,7 +209,9 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
                 continue
 
             if node.annotation is None:
-                raise CheckError("Input() call must have type annotation", lineno=node.lineno)
+                annotation_str = "<missing>"
+            else:
+                annotation_str = get_type_annotation_str(node.annotation)
 
             if not isinstance(node.target, ast.Name):
                 raise CheckError(
@@ -241,14 +238,14 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
 
             inputs[var_name] = InputSpec(
                 name=var_name,
-                type_annotation=get_type_annotation_str(node.annotation),
+                type_annotation=annotation_str,
                 default=default,
                 required=default is None,
                 lineno=node.lineno,
                 col_offset=node.col_offset,
             )
 
-        # Check non-annotated assignments (x = Input("x")) and raise error
+        # Check non-annotated assignments (x = Input("x"))
         elif isinstance(node, ast.Assign):
             if not isinstance(node.value, ast.Call):
                 continue
@@ -260,9 +257,29 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
                 is_input_call = True
 
             if is_input_call:
-                raise CheckError(
-                    "Input() call must have type annotation",
+                if not isinstance(node.targets[0], ast.Name):
+                    raise CheckError(
+                        "Input() must be assigned to a simple variable name",
+                        lineno=node.lineno,
+                    )
+
+                var_name = node.targets[0].id
+                default = None
+                for keyword in node.value.keywords:
+                    if keyword.arg == "default":
+                        try:
+                            default = ast.literal_eval(keyword.value)
+                        except (ValueError, TypeError):
+                            default = ast.unparse(keyword.value)
+                        break
+
+                inputs[var_name] = InputSpec(
+                    name=var_name,
+                    type_annotation="<missing>",
+                    default=default,
+                    required=default is None,
                     lineno=node.lineno,
+                    col_offset=node.col_offset,
                 )
 
     return inputs

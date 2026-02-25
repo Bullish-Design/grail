@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Grail v2 is a clean-break redesign that makes Monty a **first-class, transparent programming experience**. Instead of hiding Monty behind enterprise abstractions (policy inheritance, filesystem hooks, observability pipelines), Grail v2 gives developers:
+Grail v3 is a clean-break redesign that makes Monty a **first-class, transparent programming experience**. Instead of hiding Monty behind enterprise abstractions (policy inheritance, filesystem hooks, observability pipelines), Grail v3 gives developers:
 
 - **`.pym` files** — a dedicated file extension for Monty code, with full IDE support
 - **`grail check`** — a CLI that validates `.pym` files against Monty's limitations *before* runtime
@@ -64,7 +64,7 @@ From studying the raw Monty examples (expense_analysis, sql_playground), the rea
 4. **No pre-flight validation** — you discover Monty's limitations at runtime
 5. **Invisible internals** — no way to inspect generated stubs or see what Monty received
 
-Grail v2 solves exactly these problems. Nothing more.
+Grail v3 solves exactly these problems. Nothing more.
 
 ---
 
@@ -506,11 +506,14 @@ result = await script.run(
 | `externals` | `dict[str, Callable]` | `{}` | External function implementations (must match `@external` declarations) |
 | `output_model` | `type[BaseModel] \| None` | `None` | Optional Pydantic model to validate the return value |
 | `files` | `dict \| None` | `None` | Override files from `load()` |
+| `limits` | `Limits \| None` | `None` | Override resource limits |
+| `print_callback` | `Callable[[str, str], None] \| None` | `None` | Callback for print() output from the script |
+| `on_event` | `Callable[[ScriptEvent], None] \| None` | `None` | Callback for structured lifecycle events |
 
 **Behavior:**
 - Validates that all required inputs are provided (those without defaults)
 - Validates that all declared externals have implementations
-- Warns (to stderr) if extra inputs/externals are provided that weren't declared
+- Warns (via `warnings` module) if extra inputs/externals are provided that weren't declared
 - Calls `pydantic_monty.Monty()` with the processed code and stubs
 - Calls `pydantic_monty.run_monty_async()` with inputs, externals, and filesystem
 - Writes stdout/stderr to `.grail/<name>/run.log`
@@ -810,58 +813,77 @@ Key principles:
 
 ---
 
-## 10. Pause/Resume (Snapshots)
+## 10. Logging & Events
 
-### Design: Thin Wrapper Over Monty's Native Snapshot
+Grail provides a flexible event system for observing script execution. This is useful for logging, debugging, and integrating with observability tools.
 
-For advanced use cases (long-running workflows, distributed execution), grail exposes Monty's pause/resume mechanism.
+### print_callback
+
+The `print_callback` parameter receives all `print()` calls from inside the Monty sandbox:
 
 ```python
-script = grail.load("workflow.pym")
+def my_logger(stream: str, text: str) -> None:
+    print(f"[{stream}] {text}", end="")
 
-# Start execution — pauses when an external function is called
-snapshot = script.start(
-    inputs={"user_id": 42},
-    externals={"fetch_data": fetch_data, "save_result": save_result},
+result = await script.run(
+    inputs={"x": 5},
+    externals={"double": my_double},
+    print_callback=my_logger,
 )
-
-# Execution loop
-while not snapshot.is_complete:
-    # The script called an external function — fulfill it
-    name = snapshot.function_name
-    args = snapshot.args
-    kwargs = snapshot.kwargs
-
-    result = await externals[name](*args, **kwargs)
-    snapshot = snapshot.resume(return_value=result)
-
-# Done
-final_result = snapshot.value
 ```
 
-### Serialization
+The callback receives:- `stream`: Either `"stdout"` or `"stderr"`- `text`: The printed text (including newline)
+
+### on_event
+
+The `on_event` callback receives structured lifecycle events:
 
 ```python
-# Serialize for storage/transfer
-data = snapshot.dump()  # -> bytes
+from grail import ScriptEvent
 
-# Restore later
-snapshot = grail.Snapshot.load(data)
-result = snapshot.resume(return_value=some_result)
+def handle_event(event: ScriptEvent) -> None:
+    if event.type == "run_start":
+        print(f"Starting {event.script_name} with {event.input_count} inputs")
+    elif event.type == "run_complete":
+        print(f"Completed in {event.duration_ms:.2f}ms")
+    elif event.type == "run_error":
+        print(f"Error: {event.error}")
+    elif event.type == "print":
+        print(f"[script] {event.text}", end="")
+
+result = await script.run(
+    inputs={"x": 5},
+    externals={"double": my_double},
+    on_event=handle_event,
+)
 ```
 
-This is a direct pass-through to `pydantic_monty.MontySnapshot.dump()` / `.load()`. No base64 wrappers, no custom serialization — just Monty's native bytes.
+Event types:- `"run_start"`: Script execution beginning- `"run_complete"`: Script execution finished successfully- `"run_error"`: Script execution failed- `"print"`: Print output from inside the Monty sandbox- `"check_start"`: Validation check beginning- `"check_complete"`: Validation check finished
+
+### ScriptEvent Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | str | Event type (see above) |
+| `script_name` | str | Name of the script |
+| `timestamp` | float | Unix timestamp |
+| `text` | str \| None | Print output (for "print" events) |
+| `duration_ms` | float \| None | Execution duration |
+| `error` | str \| None | Error message (for "run_error") |
+| `input_count` | int \| None | Number of inputs |
+| `external_count` | int \| None | Number of externals |
+| `result_summary` | str \| None | Result type description |
 
 ---
 
 ## 11. GrailModel (Deferred)
 
-### Status: Not Included in v2 Launch
+### Status: Not Included in v3 Launch
 
 A `GrailModel` base class was considered for providing structured input/output types:
 
 ```python
-# Hypothetical — NOT part of v2
+# Hypothetical — NOT part of v3
 from grail import GrailModel
 
 class ExpenseReport(GrailModel):
@@ -929,6 +951,22 @@ If a feature isn't specific to "running Python safely in Monty," it doesn't belo
 
 ```
 src/grail/
+├── __init__.py          # Public API: load, run, run_sync, ScriptEvent, presets, errors, external, Input
+├── script.py            # GrailScript class — load, parse, run, check
+├── parser.py            # .pym file parsing — AST extraction of @external, Input()
+├── stubs.py             # Type stub generation from parsed declarations
+├── checker.py           # Monty compatibility validation (unsupported features detection)
+├── codegen.py           # .pym → monty_code.py transformation (strip declarations)
+├── errors.py            # Error hierarchy and formatting with source mapping
+├── limits.py            # Resource limit parsing and presets (STRICT, DEFAULT, PERMISSIVE)
+├── artifacts.py         # .grail/ directory management (write stubs, check.json, etc.)
+├── cli.py               # CLI entry point (grail check, grail run, grail init, etc.)
+├── _types.py            # Core dataclasses (ParseResult, CheckResult, ScriptEvent, etc.)
+├── _external.py         # @external decorator
+├── _input.py            # Input() function
+└── py.typed             # PEP 561 marker for IDE type checking
+```
+src/grail/
 ├── __init__.py          # Public API: load, run, Snapshot, presets, errors, external, Input
 ├── script.py            # GrailScript class — load, parse, run, check, start
 ├── parser.py            # .pym file parsing — AST extraction of @external, Input()
@@ -947,21 +985,22 @@ src/grail/
 
 ```python
 # Core
-grail.load(path, **options) -> GrailScript
-grail.run(code, inputs) -> Any                  # inline escape hatch
+grail.load(path, limits=None, files=None, grail_dir=".grail", dataclass_registry=None) -> GrailScript
+grail.run(code, inputs=None, print_callback=None) -> Any        # async inline escape hatch
+grail.run_sync(code, inputs=None, print_callback=None) -> Any  # sync inline escape hatch
 
 # Declarations (for use in .pym files)
 grail.external                                   # decorator
 grail.Input(name, default=...)                   # input declaration
 
-# Snapshots
-grail.Snapshot                                   # pause/resume wrapper
-grail.Snapshot.load(data) -> Snapshot
-
 # Limits
-grail.STRICT                                     # dict
-grail.DEFAULT                                    # dict
-grail.PERMISSIVE                                 # dict
+grail.Limits                                     # Pydantic model
+grail.Limits.strict() -> Limits                  # preset
+grail.Limits.default() -> Limits                # preset
+grail.Limits.permissive() -> Limits              # preset
+
+# Events
+grail.ScriptEvent                                # dataclass for lifecycle events
 
 # Errors
 grail.GrailError
@@ -984,9 +1023,9 @@ grail.CheckMessage
 
 ## 14. Migration Path
 
-This is a clean break. There is no automated migration from Grail v1.
+This is a clean break. There is no automated migration from Grail v2.
 
-### For Grail v1 Users
+### For Grail v2 Users
 
 1. **Convert code strings to `.pym` files** — move your sandboxed code out of Python strings and into `.pym` files with `@external` declarations
 2. **Replace `MontyContext` with `grail.load()`** — the 13 constructor parameters become 3 optional kwargs
@@ -999,4 +1038,4 @@ This is a clean break. There is no automated migration from Grail v1.
 
 ### Version Strategy
 
-Grail v2 will be released as `grail >= 2.0.0` (or a rename, TBD). The `grail >= 0.x` / `1.x` line is frozen — no further development.
+Grail v3 is released as `grail >= 3.0.0`.

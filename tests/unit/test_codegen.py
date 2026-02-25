@@ -1,3 +1,5 @@
+import ast
+
 from grail.parser import parse_pym_content
 from grail.codegen import generate_monty_code
 
@@ -146,8 +148,6 @@ z = x + y
 
 def test_generate_monty_code_produces_valid_python():
     """The output of generate_monty_code should always be valid Python."""
-    import ast
-
     content = """\
 from grail import external, Input
 
@@ -163,3 +163,64 @@ result = budget * 2
 
     # Should not raise
     ast.parse(monty_code)
+
+
+def test_generate_monty_code_does_not_mutate_ast():
+    """Verify that code generation doesn't modify the original ParseResult AST."""
+    content = """from grail import external, Input
+
+x: int = Input("x")
+
+@external
+async def fetch(id: int) -> str:
+    ...
+
+result = await fetch(x)
+result
+"""
+    parse_result = parse_pym_content(content)
+
+    # Count nodes before
+    original_body_len = len(parse_result.ast_module.body)
+
+    # Generate code (should not mutate)
+    generate_monty_code(parse_result)
+
+    # AST should be unchanged
+    assert len(parse_result.ast_module.body) == original_body_len
+
+
+def test_source_map_complex_code():
+    """Source map should handle complex code structures correctly."""
+    content = """from grail import external, Input
+
+x: int = Input("x")
+
+@external
+async def fetch(id: int) -> str:
+    ...
+
+async def helper(n):
+    return n * 2
+
+results = [
+    await fetch(i)
+    for i in range(x)
+]
+
+total = sum(len(r) for r in results)
+total
+"""
+    parse_result = parse_pym_content(content)
+    monty_code, source_map = generate_monty_code(parse_result)
+
+    # The generated code should be valid
+    ast.parse(monty_code)
+
+    # Source map should have mappings
+    assert len(source_map.monty_to_pym) > 0
+
+    # Every generated line should map to a valid .pym line
+    for gen_line, pym_line in source_map.monty_to_pym.items():
+        assert pym_line >= 1
+        assert pym_line <= len(parse_result.source_lines)

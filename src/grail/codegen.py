@@ -1,6 +1,7 @@
 """Code generator - transforms .pym to Monty-compatible code."""
 
 import ast
+import copy
 from grail._types import ParseResult, SourceMap
 from grail.errors import GrailError
 
@@ -24,7 +25,11 @@ class GrailDeclarationStripper(ast.NodeTransformer):
         self.inputs = inputs  # Set of input variable names
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom | None:
-        """Remove 'from grail import ...' statements."""
+        """Remove 'from grail import ...' statements.
+
+        Note: 'from typing import ...' statements are preserved because Monty
+        supports typing module imports (e.g., Dict, List, Optional).
+        """
         if node.module == "grail":
             return None  # Remove this node
         return node
@@ -52,28 +57,37 @@ def build_source_map(transformed_ast: ast.Module, generated_code: str) -> Source
     """
     Build line number mapping between .pym and generated code.
 
+    Strategy: Walk both ASTs at the statement level (not BFS over all nodes),
+    matching statements by their sequential position. This is robust because
+    ast.unparse() preserves statement order even when node structure changes
+    during the unparse/re-parse round-trip.
+
     Args:
-        transformed_ast: AST after stripping declarations
-        generated_code: Generated Monty code
+        transformed_ast: AST after stripping declarations (retains original line numbers)
+        generated_code: Generated Monty code string
 
     Returns:
         SourceMap with line mappings
     """
     source_map = SourceMap()
-
     generated_ast = ast.parse(generated_code)
 
-    for transformed_node, generated_node in zip(
-        ast.walk(transformed_ast),
-        ast.walk(generated_ast),
-    ):
-        transformed_lineno = getattr(transformed_node, "lineno", None)
-        generated_lineno = getattr(generated_node, "lineno", None)
-        if transformed_lineno is not None and generated_lineno is not None:
-            source_map.add_mapping(
-                pym_line=transformed_lineno,
-                monty_line=generated_lineno,
-            )
+    def _collect_line_numbers(module: ast.Module) -> list[int]:
+        """Collect line numbers for all statement-level nodes."""
+        result = []
+        for node in ast.walk(module):
+            if isinstance(node, ast.stmt) and not isinstance(node, ast.Module):
+                lineno = getattr(node, "lineno", None)
+                if lineno is not None:
+                    result.append(lineno)
+        return result
+
+    original_lines = _collect_line_numbers(transformed_ast)
+    generated_lines = _collect_line_numbers(generated_ast)
+
+    # Map each generated line to its original .pym line
+    for orig_line, gen_line in zip(original_lines, generated_lines):
+        source_map.add_mapping(pym_line=orig_line, monty_line=gen_line)
 
     return source_map
 
@@ -92,9 +106,9 @@ def generate_monty_code(parse_result: ParseResult) -> tuple[str, SourceMap]:
     external_names = set(parse_result.externals.keys())
     input_names = set(parse_result.inputs.keys())
 
-    # Transform AST
+    # Transform AST (deepcopy to avoid mutating original)
     stripper = GrailDeclarationStripper(external_names, input_names)
-    transformed = stripper.visit(parse_result.ast_module)
+    transformed = stripper.visit(copy.deepcopy(parse_result.ast_module))
 
     # Fix missing locations after transformation
     ast.fix_missing_locations(transformed)
