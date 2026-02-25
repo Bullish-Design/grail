@@ -183,62 +183,6 @@ x * 2
 
 
 @pytest.mark.integration
-async def test_pause_resume_workflow():
-    """Test pause/resume execution pattern."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".pym", delete=False) as f:
-        f.write("""
-from grail import external, Input
-
-x: int = Input("x")
-
-@external
-async def add_one(n: int) -> int:
-    ...
-
-@external
-async def double(n: int) -> int:
-    ...
-
-step1 = await add_one(x)
-step2 = await double(step1)
-step2
-""")
-        pym_path = Path(f.name)
-
-    try:
-
-        async def add_one_impl(n: int) -> int:
-            return n + 1
-
-        async def double_impl(n: int) -> int:
-            return n * 2
-
-        externals = {
-            "add_one": add_one_impl,
-            "double": double_impl,
-        }
-
-        script = grail.load(pym_path, grail_dir=None)
-        snapshot = script.start(inputs={"x": 5}, externals=externals)
-
-        # Execute pause/resume loop
-        while not snapshot.is_complete:
-            func_name = snapshot.function_name
-            args = snapshot.args
-            kwargs = snapshot.kwargs
-
-            # Call the external function
-            result = await externals[func_name](*args, **kwargs)
-            snapshot = snapshot.resume(return_value=result)
-
-        final_result = snapshot.value
-        assert final_result == 12  # (5 + 1) * 2
-
-    finally:
-        pym_path.unlink()
-
-
-@pytest.mark.integration
 def test_error_handling():
     """Test that errors are properly caught and mapped."""
     import asyncio

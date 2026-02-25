@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict, cast
 import re
+
+from grail._types import ResourceLimits
 
 # Named presets (plain dicts)
 STRICT: dict[str, Any] = {
@@ -96,12 +98,12 @@ def parse_duration_string(value: str) -> float:
     return number
 
 
-def parse_limits(limits: dict[str, Any]) -> dict[str, Any]:
+def parse_limits(limits: dict[str, Any]) -> ResourceLimits:
     """
     Parse limits dict, converting string formats to native types
     and translating key names to Monty format.
     """
-    parsed: dict[str, Any] = {}
+    parsed: ResourceLimits = {}
 
     for key, value in limits.items():
         if key == "max_memory" and isinstance(value, str):
@@ -121,9 +123,9 @@ def parse_limits(limits: dict[str, Any]) -> dict[str, Any]:
 
 
 def merge_limits(
-    base: dict[str, Any] | None,
-    override: dict[str, Any] | None,
-) -> dict[str, Any]:
+    base: ResourceLimits | dict[str, Any] | None,
+    override: ResourceLimits | dict[str, Any] | None,
+) -> ResourceLimits:
     """
     Merge two limits dicts, with override taking precedence.
 
@@ -138,7 +140,7 @@ def merge_limits(
         return parse_limits(DEFAULT.copy())
 
     if base is None:
-        return parse_limits(override.copy())
+        return parse_limits(cast(dict[str, Any], override.copy()))
 
     if override is None:
         return parse_limits(base.copy())

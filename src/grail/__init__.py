@@ -4,7 +4,7 @@ Grail - Transparent Python for Monty.
 A minimalist library for writing Monty code with full IDE support.
 """
 
-__version__ = "2.0.0"
+__version__ = "3.0.0"
 
 # Core functions
 from grail.script import load, run
@@ -12,9 +12,6 @@ from grail.script import load, run
 # Declarations (for .pym files)
 from grail._external import external
 from grail._input import Input
-
-# Snapshot
-from grail.snapshot import Snapshot
 
 # Limits presets
 from grail.limits import STRICT, DEFAULT, PERMISSIVE
@@ -42,8 +39,6 @@ __all__ = [
     # Declarations
     "external",
     "Input",
-    # Snapshot
-    "Snapshot",
     # Limits
     "STRICT",
     "DEFAULT",

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "grail"
-version = "0.1.0"
+version = "3.0.0"
 description = "Pydantic-native wrapper around Monty for secure Python execution."
 readme = "README.md"
 requires-python = ">=3.13"

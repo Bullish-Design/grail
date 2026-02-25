@@ -98,7 +98,7 @@ def test_load_with_limits():
     """Should accept limits parameter."""
     script = load(FIXTURES_DIR / "simple.pym", limits={"max_memory": "8mb"}, grail_dir=None)
 
-    assert script.limits == {"max_memory": "8mb"}
+    assert script.limits == {"max_memory": 8388608}
 
 
 def test_load_with_files():

@@ -12,8 +12,6 @@ def test_public_api_symbols():
         # Declarations
         "external",
         "Input",
-        # Snapshot
-        "Snapshot",
         # Limits
         "STRICT",
         "DEFAULT",
@@ -56,7 +54,6 @@ def test_can_import_all():
         run,
         external,
         Input,
-        Snapshot,
         STRICT,
         DEFAULT,
         PERMISSIVE,

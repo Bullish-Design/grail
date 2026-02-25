@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 import time
 import re
 
@@ -11,7 +11,7 @@ try:
 except ImportError:
     pydantic_monty = None
 
-from grail._types import ExternalSpec, InputSpec, CheckResult, SourceMap
+from grail._types import ExternalSpec, InputSpec, CheckResult, SourceMap, ResourceLimits
 from grail.parser import parse_pym_file
 from grail.checker import check_pym
 from grail.stubs import generate_stubs
@@ -41,7 +41,7 @@ class GrailScript:
         stubs: str,
         source_map: SourceMap,
         source_lines: list[str],
-        limits: dict[str, Any] | None = None,
+        limits: ResourceLimits | None = None,
         files: dict[str, str | bytes] | None = None,
         grail_dir: Path | None = None,
     ):
@@ -138,7 +138,9 @@ class GrailScript:
             if name not in self.externals:
                 print(f"Warning: Extra external '{name}' not declared in script")
 
-    def _prepare_monty_limits(self, override_limits: dict[str, Any] | None) -> dict[str, Any]:
+    def _prepare_monty_limits(
+        self, override_limits: ResourceLimits | dict[str, Any] | None
+    ) -> ResourceLimits:
         """
         Merge and parse limits for Monty.
 
@@ -219,7 +221,7 @@ class GrailScript:
         externals: dict[str, Callable] | None = None,
         output_model: type | None = None,
         files: dict[str, str | bytes] | None = None,
-        limits: dict[str, Any] | None = None,
+        limits: ResourceLimits | dict[str, Any] | None = None,
     ) -> Any:
         """
         Execute the script in Monty.
@@ -344,48 +346,6 @@ class GrailScript:
         """
         return asyncio.run(self.run(inputs, externals, **kwargs))
 
-    def start(
-        self,
-        inputs: dict[str, Any] | None = None,
-        externals: dict[str, Callable] | None = None,
-    ):
-        """
-        Begin resumable execution (pause/resume pattern).
-
-        Args:
-            inputs: Input values
-            externals: External function implementations
-
-        Returns:
-            Snapshot object
-        """
-        # Import here to avoid circular dependency
-        from grail.snapshot import Snapshot
-
-        if pydantic_monty is None:
-            raise RuntimeError("pydantic-monty not installed")
-
-        inputs = inputs or {}
-        externals = externals or {}
-
-        # Validate inputs and externals
-        self._validate_inputs(inputs)
-        self._validate_externals(externals)
-
-        # Create Monty instance
-        monty = pydantic_monty.Monty(
-            self.monty_code,
-            type_check=True,
-            type_check_stubs=self.stubs,
-            inputs=list(self.inputs.keys()),  # Pass list of input names
-            external_functions=list(self.externals.keys()),  # Pass list of external function names
-        )
-
-        # Start execution (this will pause on first external call)
-        monty_snapshot = monty.start(inputs=inputs)
-
-        return Snapshot(monty_snapshot, self.source_map, externals)
-
 
 def load(
     path: str | Path,
@@ -443,7 +403,7 @@ def load(
         stubs=stubs,
         source_map=source_map,
         source_lines=parse_result.source_lines,
-        limits=limits,
+        limits=parse_limits(cast(dict[str, Any], limits)) if limits else None,
         files=files,
         grail_dir=grail_dir_path,
     )
