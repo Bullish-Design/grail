@@ -173,7 +173,7 @@ x * 2
         pym_path = Path(f.name)
 
     try:
-        script = grail.load(pym_path, limits=grail.STRICT, grail_dir=None)
+        script = grail.load(pym_path, limits=grail.Limits.strict(), grail_dir=None)
 
         result = await script.run(inputs={"x": 5})
         assert result == 10

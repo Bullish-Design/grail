@@ -13,8 +13,8 @@ from grail.script import load, run
 from grail._external import external
 from grail._input import Input
 
-# Limits presets
-from grail.limits import STRICT, DEFAULT, PERMISSIVE
+# Limits
+from grail.limits import Limits
 
 # Errors
 from grail.errors import (
@@ -40,9 +40,7 @@ __all__ = [
     "external",
     "Input",
     # Limits
-    "STRICT",
-    "DEFAULT",
-    "PERMISSIVE",
+    "Limits",
     # Errors
     "GrailError",
     "ParseError",

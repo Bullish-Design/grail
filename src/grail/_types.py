@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 
 
 @dataclass
@@ -91,13 +91,3 @@ class CheckResult:
     errors: list[CheckMessage]
     warnings: list[CheckMessage]
     info: dict[str, Any]
-
-
-class ResourceLimits(TypedDict, total=False):
-    """Resource limits for Monty execution (Monty's native format)."""
-
-    max_allocations: int
-    max_duration_secs: float
-    max_memory: int
-    gc_interval: int
-    max_recursion_depth: int

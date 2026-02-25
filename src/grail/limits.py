@@ -1,30 +1,11 @@
-"""Resource limits parsing and presets."""
+"""Resource limits for script execution."""
 
 from __future__ import annotations
 
-from typing import Any, TypedDict, cast
 import re
+from typing import Any
 
-from grail._types import ResourceLimits
-
-# Named presets (plain dicts)
-STRICT: dict[str, Any] = {
-    "max_memory": "8mb",
-    "max_duration": "500ms",
-    "max_recursion": 120,
-}
-
-DEFAULT: dict[str, Any] = {
-    "max_memory": "16mb",
-    "max_duration": "2s",
-    "max_recursion": 200,
-}
-
-PERMISSIVE: dict[str, Any] = {
-    "max_memory": "64mb",
-    "max_duration": "5s",
-    "max_recursion": 400,
-}
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 def parse_memory_string(value: str) -> int:
@@ -33,35 +14,20 @@ def parse_memory_string(value: str) -> int:
 
     Examples:
         "16mb" -> 16777216
-        "1gb" -> 1073741824
+        "1gb"  -> 1073741824
         "512kb" -> 524288
 
-    Args:
-        value: Memory string (e.g., "16mb", "1GB")
-
-    Returns:
-        Number of bytes
-
     Raises:
-        ValueError: If format is invalid
+        ValueError: If format is invalid.
     """
     value = value.lower().strip()
-
-    # Match number and unit
     match = re.match(r"^(\d+(?:\.\d+)?)(kb|mb|gb)$", value)
     if not match:
         raise ValueError(f"Invalid memory format: {value}. Use format like '16mb', '1gb'")
 
     number, unit = match.groups()
-    number = float(number)
-
-    multipliers = {
-        "kb": 1024,
-        "mb": 1024 * 1024,
-        "gb": 1024 * 1024 * 1024,
-    }
-
-    return int(number * multipliers[unit])
+    multipliers = {"kb": 1024, "mb": 1024**2, "gb": 1024**3}
+    return int(float(number) * multipliers[unit])
 
 
 def parse_duration_string(value: str) -> float:
@@ -70,81 +36,166 @@ def parse_duration_string(value: str) -> float:
 
     Examples:
         "500ms" -> 0.5
-        "2s" -> 2.0
-        "1.5s" -> 1.5
-
-    Args:
-        value: Duration string (e.g., "500ms", "2s")
-
-    Returns:
-        Number of seconds
+        "2s"    -> 2.0
 
     Raises:
-        ValueError: If format is invalid
+        ValueError: If format is invalid.
     """
     value = value.lower().strip()
-
-    # Match number and unit
     match = re.match(r"^(\d+(?:\.\d+)?)(ms|s)$", value)
     if not match:
         raise ValueError(f"Invalid duration format: {value}. Use format like '500ms', '2s'")
 
     number, unit = match.groups()
     number = float(number)
-
-    if unit == "ms":
-        return number / 1000.0
-
-    return number
+    return number / 1000.0 if unit == "ms" else number
 
 
-def parse_limits(limits: dict[str, Any]) -> ResourceLimits:
+class Limits(BaseModel, frozen=True):
     """
-    Parse limits dict, converting string formats to native types
-    and translating key names to Monty format.
+    Resource limits for script execution.
+
+    All fields are optional. Omit a field (or pass None) to leave that
+    limit unconstrained.
+
+    Memory and duration accept human-readable strings:
+        Limits(max_memory="16mb", max_duration="2s")
+
+    Use presets for common configurations:
+        Limits.strict()
+        Limits.default()
+        Limits.permissive()
     """
-    parsed: ResourceLimits = {}
 
-    for key, value in limits.items():
-        if key == "max_memory" and isinstance(value, str):
-            parsed["max_memory"] = parse_memory_string(value)
-        elif key == "max_memory":
-            parsed["max_memory"] = value
-        elif key == "max_duration" and isinstance(value, str):
-            parsed["max_duration_secs"] = parse_duration_string(value)  # Key renamed
-        elif key == "max_duration":
-            parsed["max_duration_secs"] = float(value)  # Key renamed
-        elif key == "max_recursion":
-            parsed["max_recursion_depth"] = value  # Key renamed
-        else:
-            parsed[key] = value
+    model_config = ConfigDict(extra="forbid")
 
-    return parsed
+    max_memory: int | None = None
+    """Maximum heap memory in bytes. Accepts strings like '16mb', '1gb'."""
+
+    max_duration: float | None = None
+    """Maximum execution time in seconds. Accepts strings like '500ms', '2s'."""
+
+    max_recursion: int | None = None
+    """Maximum function call stack depth."""
+
+    max_allocations: int | None = None
+    """Maximum number of heap allocations allowed."""
+
+    gc_interval: int | None = None
+    """Run garbage collection every N allocations."""
+
+    @field_validator("max_memory", mode="before")
+    @classmethod
+    def _parse_memory(cls, v: Any) -> int | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return parse_memory_string(v)
+        return v
+
+    @field_validator("max_duration", mode="before")
+    @classmethod
+    def _parse_duration(cls, v: Any) -> float | None:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return parse_duration_string(v)
+        return v
+
+    # --- Presets ---
+
+    @classmethod
+    def strict(cls) -> Limits:
+        """Tight limits for untrusted code."""
+        return cls(max_memory="8mb", max_duration="500ms", max_recursion=120)
+
+    @classmethod
+    def default(cls) -> Limits:
+        """Balanced defaults for typical scripts."""
+        return cls(max_memory="16mb", max_duration="2s", max_recursion=200)
+
+    @classmethod
+    def permissive(cls) -> Limits:
+        """Relaxed limits for trusted or heavy workloads."""
+        return cls(max_memory="64mb", max_duration="5s", max_recursion=400)
+
+    # --- Merging ---
+
+    def merge(self, overrides: Limits) -> Limits:
+        """
+        Return a new Limits with override values taking precedence.
+
+        Only non-None fields in `overrides` replace the base values.
+        """
+        return Limits(
+            max_memory=overrides.max_memory
+            if overrides.max_memory is not None
+            else self.max_memory,
+            max_duration=overrides.max_duration
+            if overrides.max_duration is not None
+            else self.max_duration,
+            max_recursion=overrides.max_recursion
+            if overrides.max_recursion is not None
+            else self.max_recursion,
+            max_allocations=overrides.max_allocations
+            if overrides.max_allocations is not None
+            else self.max_allocations,
+            gc_interval=overrides.gc_interval
+            if overrides.gc_interval is not None
+            else self.gc_interval,
+        )
+
+    # --- Monty Conversion ---
+
+    def to_monty(self) -> dict[str, Any]:
+        """
+        Convert to the dict format expected by ``pydantic_monty.run_monty_async()``.
+
+        Key renames:
+            max_duration  -> max_duration_secs
+            max_recursion -> max_recursion_depth
+        """
+        mapping: list[tuple[str, str]] = [
+            ("max_memory", "max_memory"),
+            ("max_duration", "max_duration_secs"),
+            ("max_recursion", "max_recursion_depth"),
+            ("max_allocations", "max_allocations"),
+            ("gc_interval", "gc_interval"),
+        ]
+        result: dict[str, Any] = {}
+        for attr, monty_key in mapping:
+            value = getattr(self, attr)
+            if value is not None:
+                result[monty_key] = value
+        return result
+
+
+# --- Legacy API (for backward compatibility) ---
+
+
+def parse_limits(limits: dict[str, Any]) -> dict[str, Any]:
+    """
+    Parse limits dict, converting string formats to native types.
+
+    Deprecated: Use Limits() instead.
+    """
+    return Limits(**limits).to_monty()
 
 
 def merge_limits(
-    base: ResourceLimits | dict[str, Any] | None,
-    override: ResourceLimits | dict[str, Any] | None,
-) -> ResourceLimits:
+    base: dict[str, Any] | None,
+    override: dict[str, Any] | None,
+) -> dict[str, Any]:
     """
     Merge two limits dicts, with override taking precedence.
 
-    Args:
-        base: Base limits (e.g., from load())
-        override: Override limits (e.g., from run())
-
-    Returns:
-        Merged limits dict
+    Deprecated: Use Limits().merge() instead.
     """
-    if base is None and override is None:
-        return parse_limits(DEFAULT.copy())
+    base_limits = Limits(**base) if base else Limits()
+    override_limits = Limits(**override) if override else Limits()
+    return base_limits.merge(override_limits).to_monty()
 
-    if base is None:
-        return parse_limits(cast(dict[str, Any], override.copy()))
 
-    if override is None:
-        return parse_limits(base.copy())
-
-    merged = base.copy()
-    merged.update(override)
-    return parse_limits(merged)
+STRICT: dict[str, Any] = {"max_memory": "8mb", "max_duration": "500ms", "max_recursion": 120}
+DEFAULT: dict[str, Any] = {"max_memory": "16mb", "max_duration": "2s", "max_recursion": 200}
+PERMISSIVE: dict[str, Any] = {"max_memory": "64mb", "max_duration": "5s", "max_recursion": 400}

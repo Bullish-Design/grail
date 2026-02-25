@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, Callable
 import time
 import re
 
@@ -11,13 +11,13 @@ try:
 except ImportError:
     pydantic_monty = None
 
-from grail._types import ExternalSpec, InputSpec, CheckResult, SourceMap, ResourceLimits
+from grail._types import ExternalSpec, InputSpec, CheckResult, SourceMap
 from grail.parser import parse_pym_file
 from grail.checker import check_pym
 from grail.stubs import generate_stubs
 from grail.codegen import generate_monty_code
 from grail.artifacts import ArtifactsManager
-from grail.limits import merge_limits, parse_limits
+from grail.limits import Limits
 from grail.errors import InputError, ExternalError, ExecutionError, LimitError, OutputError
 
 
@@ -41,7 +41,7 @@ class GrailScript:
         stubs: str,
         source_map: SourceMap,
         source_lines: list[str],
-        limits: ResourceLimits | None = None,
+        limits: Limits | None = None,
         files: dict[str, str | bytes] | None = None,
         grail_dir: Path | None = None,
     ):
@@ -138,19 +138,21 @@ class GrailScript:
             if name not in self.externals:
                 print(f"Warning: Extra external '{name}' not declared in script")
 
-    def _prepare_monty_limits(
-        self, override_limits: ResourceLimits | dict[str, Any] | None
-    ) -> ResourceLimits:
+    def _prepare_monty_limits(self, override_limits: Limits | None) -> dict[str, Any]:
         """
-        Merge and parse limits for Monty.
+        Merge load-time and run-time limits into a Monty-native dict.
 
-        Args:
-            override_limits: Runtime limit overrides
-
-        Returns:
-            Parsed limits dict ready for Monty
+        Falls back to Limits.default() if no limits are provided anywhere.
         """
-        return merge_limits(self.limits, override_limits)
+        base = self.limits
+        if base is None and override_limits is None:
+            return Limits.default().to_monty()
+        if base is None:
+            assert override_limits is not None
+            return override_limits.to_monty()
+        if override_limits is None:
+            return base.to_monty()
+        return base.merge(override_limits).to_monty()
 
     def _prepare_monty_files(self, override_files: dict[str, str | bytes] | None):
         """
@@ -221,7 +223,7 @@ class GrailScript:
         externals: dict[str, Callable] | None = None,
         output_model: type | None = None,
         files: dict[str, str | bytes] | None = None,
-        limits: ResourceLimits | dict[str, Any] | None = None,
+        limits: Limits | None = None,
     ) -> Any:
         """
         Execute the script in Monty.
@@ -349,7 +351,7 @@ class GrailScript:
 
 def load(
     path: str | Path,
-    limits: dict[str, Any] | None = None,
+    limits: Limits | None = None,
     files: dict[str, str | bytes] | None = None,
     grail_dir: str | Path | None = ".grail",
 ) -> GrailScript:
@@ -403,7 +405,7 @@ def load(
         stubs=stubs,
         source_map=source_map,
         source_lines=parse_result.source_lines,
-        limits=parse_limits(cast(dict[str, Any], limits)) if limits else None,
+        limits=limits,
         files=files,
         grail_dir=grail_dir_path,
     )

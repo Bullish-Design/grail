@@ -42,18 +42,17 @@ Grail wraps **Monty** (`pydantic-monty`), a secure Rust-based Python interpreter
 
 | File | Lines | Role |
 |------|-------|------|
-| `src/grail/__init__.py` | 64 | Public API exports |
-| `src/grail/script.py` | 471 | Load/run orchestration (core) |
+| `src/grail/__init__.py` | 59 | Public API exports |
+| `src/grail/script.py` | ~410 | Load/run orchestration (core) |
 | `src/grail/parser.py` | 337 | AST extraction of `@external`, `Input()` |
 | `src/grail/checker.py` | 268 | Monty compatibility validation |
 | `src/grail/codegen.py` | 118 | `.pym` → monty_code transformation |
 | `src/grail/stubs.py` | 77 | Stub generation |
-| `src/grail/snapshot.py` | 176 | Pause/resume wrapper (**REMOVING**) |
 | `src/grail/errors.py` | 128 | Error hierarchy |
-| `src/grail/limits.py` | 149 | Limit parsing and presets |
+| `src/grail/limits.py` | ~210 | Limits Pydantic model (replaces parse_limits/merge_limits) |
 | `src/grail/artifacts.py` | 149 | `.grail/` directory management |
 | `src/grail/cli.py` | 401 | CLI commands |
-| `src/grail/_types.py` | 97 | Core dataclasses |
+| `src/grail/_types.py` | 94 | Core dataclasses |
 | `src/grail/_external.py` | 27 | `@external` decorator |
 | `src/grail/_input.py` | 38 | `Input()` function |
 
@@ -361,39 +360,20 @@ python -c "import grail; print(grail.__version__)"
 # Should print: 3.0.0
 ```
 
-#### Step 1.2: Fix `ResourceLimits` Type
+#### Step 1.2: Replace `ResourceLimits` with `Limits` Pydantic Model
 
-**Problem:** `_types.py:96` defines `ResourceLimits = dict[str, Any]` — this loses all type information. Should be a `TypedDict`.
+**Problem:** `_types.py` previously defined `ResourceLimits = dict[str, Any]` — this loses all type information. The old system had separate `parse_limits()`, `merge_limits()`, and preset dicts (`STRICT`/`DEFAULT`/`PERMISSIVE`) that were error-prone.
 
-**File to modify:** `src/grail/_types.py`
+**Solution:** Replace with a frozen Pydantic `Limits` model that:
+- Parses once at construction (string values like `"16mb"` → `16777216`)
+- Validates input (rejects unknown keys, typos)
+- Has `.strict()`, `.default()`, `.permissive()` class methods for presets
+- Has `.merge(overrides)` for combining limits
+- Has `.to_monty()` for converting to Monty's dict format
 
-**Change:**
-```python
-# BEFORE
-ResourceLimits = dict[str, Any]
+**Files to modify:** None - this was already implemented in a separate limits refactor.
 
-# AFTER
-from typing import TypedDict
-
-class ResourceLimits(TypedDict, total=False):
-    """Resource limits for Monty execution (Monty's native format)."""
-    max_allocations: int
-    max_duration_secs: float
-    max_memory: int
-    gc_interval: int
-    max_recursion_depth: int
-```
-
-**Then update** all type hints that reference `dict[str, Any]` for limits throughout the codebase to use `ResourceLimits` where appropriate. Note: The *user-facing* limits API still accepts `dict[str, Any]` (with string keys like `"max_memory": "16mb"`), but `parse_limits()` should return `ResourceLimits`. You'll need to add the import in files that reference it.
-
-**Files to update:**
-- `src/grail/limits.py` — `parse_limits()` return type → `ResourceLimits`, `merge_limits()` return type → `ResourceLimits`
-- `src/grail/script.py` — `GrailScript.__init__` limits parameter and `_prepare_monty_limits` return type
-
-**Verification:**
-```bash
-python -m pytest tests/unit/test_types.py tests/unit/test_limits.py -v
-```
+**Note:** This step has been completed as part of a separate limits refactor. The `Limits` class in `src/grail/limits.py` is now the single source of truth for resource limits throughout the system.
 
 #### Step 1.3: Create `py.typed` Marker
 
@@ -458,7 +438,11 @@ python -c "from grail import Snapshot" 2>&1 | grep -i error
 # Should show ImportError
 
 # Verify all other public symbols still work
-python -c "from grail import load, run, external, Input, STRICT, DEFAULT, PERMISSIVE, GrailError, ParseError, CheckError, InputError, ExternalError, ExecutionError, LimitError, OutputError, CheckResult, CheckMessage; print('All imports OK')"
+python -c "from grail import load, run, external, Input, Limits, GrailError, ParseError, CheckError, InputError, ExternalError, ExecutionError, LimitError, OutputError, CheckResult, CheckMessage; print('All imports OK')"
+
+# Verify Limits works
+python -c "from grail import Limits; l = Limits.strict(); print(l.to_monty())"
+# Should print: {'max_memory': 8388608, 'max_duration_secs': 0.5, 'max_recursion_depth': 120}
 ```
 
 ---
@@ -1105,9 +1089,9 @@ async def run(
     externals: dict[str, Callable] | None = None,
     output_model: type | None = None,
     files: dict[str, str | bytes] | None = None,
-    limits: dict[str, Any] | None = None,
+    limits: Limits | None = None,
     print_callback: Callable[[str, str], None] | None = None,
-    on_event: Callable[..., None] | None = None,
+    on_event: Callable[[ScriptEvent], None] | None = None,
 ) -> Any:
 ```
 
@@ -1506,7 +1490,7 @@ def __init__(
 ```python
 def load(
     path: str | Path,
-    limits: dict[str, Any] | None = None,
+    limits: Limits | None = None,
     files: dict[str, str | bytes] | None = None,
     grail_dir: str | Path | None = ".grail",
     dataclass_registry: list[type] | None = None,
@@ -1592,56 +1576,16 @@ def test_run_sync_raises_in_async_context():
     pass  # See integration tests
 ```
 
-#### Step 6.4: Add `max_allocations` and `gc_interval` to Limits
+#### Step 6.4: Limits Already Supports All Fields
 
-**Problem:** `parse_limits()` doesn't handle `max_allocations` or `gc_interval`, which are valid Monty `ResourceLimits` fields.
+**Status:** This step is no longer needed. The `Limits` Pydantic model already includes `max_allocations` and `gc_interval` as explicit fields with validation.
 
-**File to modify:** `src/grail/limits.py`
-
-**Update `parse_limits()`:**
-
-```python
-def parse_limits(limits: dict[str, Any]) -> dict[str, Any]:
-    parsed: dict[str, Any] = {}
-
-    for key, value in limits.items():
-        if key == "max_memory" and isinstance(value, str):
-            parsed["max_memory"] = parse_memory_string(value)
-        elif key == "max_memory":
-            parsed["max_memory"] = value
-        elif key == "max_duration" and isinstance(value, str):
-            parsed["max_duration_secs"] = parse_duration_string(value)
-        elif key == "max_duration":
-            parsed["max_duration_secs"] = float(value)
-        elif key == "max_recursion":
-            parsed["max_recursion_depth"] = value
-        elif key == "max_allocations":
-            parsed["max_allocations"] = int(value)
-        elif key == "gc_interval":
-            parsed["gc_interval"] = int(value)
-        else:
-            parsed[key] = value
-
-    return parsed
-```
-
-**Update presets** if appropriate (add `max_allocations` to `STRICT` if desired).
-
-**Verification:**
-```bash
-python -m pytest tests/unit/test_limits.py -v
-```
-
-Add tests:
-```python
-def test_parse_max_allocations():
-    result = parse_limits({"max_allocations": 10000})
-    assert result["max_allocations"] == 10000
-
-def test_parse_gc_interval():
-    result = parse_limits({"gc_interval": 500})
-    assert result["gc_interval"] == 500
-```
+The `Limits` model handles all Monty resource limit fields:
+- `max_memory` - accepts string ("16mb") or int
+- `max_duration` - accepts string ("500ms") or float  
+- `max_recursion` - int
+- `max_allocations` - int
+- `gc_interval` - int
 
 #### Step 6.5: Fix CLI `cmd_run` to Pass Loaded Script
 
@@ -2045,7 +1989,8 @@ test -f src/grail/py.typed && echo "py.typed exists" || echo "MISSING"
 | script_name set | Error tracebacks show `.pym` filename |
 | dataclass_registry exposed | Parameter accepted on `load()` |
 | run_sync safe | Clear error in async context |
-| max_allocations/gc_interval | `test_parse_max_allocations`, `test_parse_gc_interval` pass |
+| max_allocations/gc_interval | `Limits` model has these fields with validation |
+| Limits model works | `Limits.strict()`, `Limits.default()`, `Limits.permissive()`, `.merge()`, `.to_monty()` all work |
 | No bare print() in library | grep for `print(` in `src/grail/` shows only necessary usage |
 | Snapshot removed | `Snapshot` not in `__all__`, `snapshot.py` deleted |
 | Version matches | `__init__.py` and `pyproject.toml` both say `3.0.0` |
@@ -2054,15 +1999,15 @@ test -f src/grail/py.typed && echo "py.typed exists" || echo "MISSING"
 
 | File | Action | Phase |
 |------|--------|-------|
-| `src/grail/__init__.py` | Modify (version, exports) | 1, 2, 5, 6 |
-| `src/grail/_types.py` | Modify (ResourceLimits TypedDict, ScriptEvent) | 1, 5 |
+| `src/grail/__init__.py` | Modify (version, exports, Limits) | 1, 2, 5, 6 |
+| `src/grail/_types.py` | Modify (ScriptEvent, removed ResourceLimits TypedDict) | 1, 5 |
 | `src/grail/py.typed` | Create | 1 |
 | `src/grail/snapshot.py` | **Delete** | 2 |
 | `src/grail/script.py` | Modify (remove start(), fix errors, add logging, add params) | 2, 3, 4, 5, 6, 7 |
 | `src/grail/codegen.py` | Modify (deepcopy AST, fix source map) | 3 |
 | `src/grail/checker.py` | Modify (add E006-E008, W002-W003) | 4 |
 | `src/grail/parser.py` | Modify (lenient extraction) | 4 |
-| `src/grail/limits.py` | Modify (max_allocations, gc_interval) | 6 |
+| `src/grail/limits.py` | **Rewrite** (Limits Pydantic model) | 1 (separate refactor) |
 | `src/grail/cli.py` | Modify (pass script to host) | 6 |
 | `src/grail/errors.py` | No changes needed | — |
 | `src/grail/stubs.py` | No changes needed | — |
@@ -2076,7 +2021,7 @@ test -f src/grail/py.typed && echo "py.typed exists" || echo "MISSING"
 | `tests/unit/test_checker.py` | Modify (add tests) | 4 |
 | `tests/unit/test_parser.py` | Modify (update expectations) | 4 |
 | `tests/unit/test_logging.py` | **Create** | 5 |
-| `tests/unit/test_limits.py` | Modify (add tests) | 6 |
+| `tests/unit/test_limits.py` | **Rewrite** (comprehensive Limits tests) | 1 (separate refactor) |
 | `tests/unit/test_cli.py` | Modify | 6 |
 | `tests/integration/test_end_to_end.py` | Modify (remove snapshot, add logging) | 2, 5 |
 | `GRAIL_CONCEPT.md` | Modify | 8 |

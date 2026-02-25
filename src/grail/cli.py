@@ -10,7 +10,6 @@ from typing import List
 from grail.script import load
 from grail.artifacts import ArtifactsManager
 from grail.errors import GrailError, ParseError
-from grail.limits import DEFAULT
 
 
 def cmd_init(args):

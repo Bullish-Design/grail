@@ -95,10 +95,17 @@ def test_run_sync():
 
 
 def test_load_with_limits():
-    """Should accept limits parameter."""
-    script = load(FIXTURES_DIR / "simple.pym", limits={"max_memory": "8mb"}, grail_dir=None)
+    """Should accept Limits parameter."""
+    from grail.limits import Limits
 
-    assert script.limits == {"max_memory": 8388608}
+    script = load(
+        FIXTURES_DIR / "simple.pym",
+        limits=Limits(max_memory="8mb"),
+        grail_dir=None,
+    )
+
+    assert isinstance(script.limits, Limits)
+    assert script.limits.max_memory == 8 * 1024 * 1024
 
 
 def test_load_with_files():

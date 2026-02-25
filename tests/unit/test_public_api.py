@@ -13,9 +13,7 @@ def test_public_api_symbols():
         "external",
         "Input",
         # Limits
-        "STRICT",
-        "DEFAULT",
-        "PERMISSIVE",
+        "Limits",
         # Errors
         "GrailError",
         "ParseError",
@@ -44,7 +42,7 @@ def test_all_list():
     """Should have __all__ list."""
     assert hasattr(grail, "__all__")
     assert isinstance(grail.__all__, list)
-    assert len(grail.__all__) >= 15
+    assert len(grail.__all__) >= 14
 
 
 def test_can_import_all():
@@ -54,9 +52,7 @@ def test_can_import_all():
         run,
         external,
         Input,
-        STRICT,
-        DEFAULT,
-        PERMISSIVE,
+        Limits,
         GrailError,
         ParseError,
         CheckError,
