@@ -74,61 +74,6 @@ def extract_function_params(
     return params
 
 
-def validate_external_function(
-    func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> None:
-    """Validate that external function meets requirements.
-
-    Requirements:
-        - Complete type annotations on all parameters
-        - Return type annotation
-        - Body is single Ellipsis statement (optionally preceded by docstring)
-
-    Args:
-        func_node: Function definition to validate.
-
-    Raises:
-        CheckError: If validation fails.
-    """
-    if func_node.returns is None:
-        raise CheckError(
-            f"Function '{func_node.name}' missing return type annotation",
-            lineno=func_node.lineno,
-        )
-
-    # Skip optional docstring (first statement if it's a string constant)
-    body_start_idx = 0
-    if (
-        len(func_node.body) > 0
-        and isinstance(func_node.body[0], ast.Expr)
-        and isinstance(func_node.body[0].value, ast.Constant)
-        and isinstance(func_node.body[0].value.value, str)
-    ):
-        body_start_idx = 1
-
-    remaining_body = func_node.body[body_start_idx:]
-
-    if len(remaining_body) != 1:
-        raise CheckError(
-            f"External function '{func_node.name}' body must be single '...' (Ellipsis)",
-            lineno=func_node.lineno,
-        )
-
-    body_stmt = remaining_body[0]
-
-    if not isinstance(body_stmt, ast.Expr):
-        raise CheckError(
-            f"External function '{func_node.name}' body must be '...' (Ellipsis)",
-            lineno=func_node.lineno,
-        )
-
-    if not isinstance(body_stmt.value, ast.Constant) or body_stmt.value.value is not Ellipsis:
-        raise CheckError(
-            f"External function '{func_node.name}' body must be '...' (Ellipsis), not actual code",
-            lineno=func_node.lineno,
-        )
-
-
 def extract_externals(module: ast.Module) -> dict[str, ExternalSpec]:
     """Extract external function specifications from AST.
 

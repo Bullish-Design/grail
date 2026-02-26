@@ -107,17 +107,29 @@ class Limits(BaseModel, frozen=True):
     @classmethod
     def strict(cls) -> Limits:
         """Tight limits for untrusted code."""
-        return cls(max_memory="8mb", max_duration="500ms", max_recursion=120)
+        return cls(
+            max_memory=parse_memory_string("8mb"),
+            max_duration=parse_duration_string("500ms"),
+            max_recursion=120,
+        )
 
     @classmethod
     def default(cls) -> Limits:
         """Balanced defaults for typical scripts."""
-        return cls(max_memory="16mb", max_duration="2s", max_recursion=200)
+        return cls(
+            max_memory=parse_memory_string("16mb"),
+            max_duration=parse_duration_string("2s"),
+            max_recursion=200,
+        )
 
     @classmethod
     def permissive(cls) -> Limits:
         """Relaxed limits for trusted or heavy workloads."""
-        return cls(max_memory="64mb", max_duration="5s", max_recursion=400)
+        return cls(
+            max_memory=parse_memory_string("64mb"),
+            max_duration=parse_duration_string("5s"),
+            max_recursion=400,
+        )
 
     # --- Merging ---
 
@@ -170,32 +182,6 @@ class Limits(BaseModel, frozen=True):
         return result
 
 
-# --- Legacy API (for backward compatibility) ---
-
-
-def parse_limits(limits: dict[str, Any]) -> dict[str, Any]:
-    """
-    Parse limits dict, converting string formats to native types.
-
-    Deprecated: Use Limits() instead.
-    """
-    return Limits(**limits).to_monty()
-
-
-def merge_limits(
-    base: dict[str, Any] | None,
-    override: dict[str, Any] | None,
-) -> dict[str, Any]:
-    """
-    Merge two limits dicts, with override taking precedence.
-
-    Deprecated: Use Limits().merge() instead.
-    """
-    base_limits = Limits(**base) if base else Limits()
-    override_limits = Limits(**override) if override else Limits()
-    return base_limits.merge(override_limits).to_monty()
-
-
-STRICT: dict[str, Any] = {"max_memory": "8mb", "max_duration": "500ms", "max_recursion": 120}
-DEFAULT: dict[str, Any] = {"max_memory": "16mb", "max_duration": "2s", "max_recursion": 200}
-PERMISSIVE: dict[str, Any] = {"max_memory": "64mb", "max_duration": "5s", "max_recursion": 400}
+STRICT: dict[str, Any] = Limits.strict().to_monty()
+DEFAULT: dict[str, Any] = Limits.default().to_monty()
+PERMISSIVE: dict[str, Any] = Limits.permissive().to_monty()

@@ -46,6 +46,21 @@ class GrailDeclarationStripper(ast.NodeTransformer):
             return None
         return node
 
+    def visit_Assign(self, node: ast.Assign) -> ast.Assign | None:
+        """Strip Input() assignments without annotations."""
+        if isinstance(node.value, ast.Call):
+            func = node.value.func
+            is_input_call = False
+            if isinstance(func, ast.Name) and func.id == "Input":
+                is_input_call = True
+            elif isinstance(func, ast.Attribute) and func.attr == "Input":
+                is_input_call = True
+            if is_input_call:
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in self.inputs:
+                        return None
+        return node
+
     def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign | None:
         """Remove Input() assignment statements."""
         if isinstance(node.target, ast.Name) and node.target.id in self.inputs:

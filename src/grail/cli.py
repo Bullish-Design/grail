@@ -215,8 +215,15 @@ def cmd_run(args):
 
             # Import host module
             spec = importlib.util.spec_from_file_location("host", host_path)
+            if spec is None:
+                print(f"Error: Cannot load host file {host_path}", file=sys.stderr)
+                return 1
+            loader = spec.loader
+            if loader is None:
+                print(f"Error: Cannot execute host file {host_path}", file=sys.stderr)
+                return 1
             host_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(host_module)
+            loader.exec_module(host_module)
 
             # Run host's main() - always pass script and inputs as kwargs
             if hasattr(host_module, "main"):

@@ -7,14 +7,14 @@ A minimalist library for writing Monty code with full IDE support.
 __version__ = "3.0.0"
 
 # Core functions
-from grail.script import load, run, run_sync
+from grail.script import load, run, run_sync, GrailScript
 
 # Declarations (for .pym files)
 from grail._external import external
 from grail._input import Input
 
 # Limits
-from grail.limits import Limits
+from grail.limits import Limits, STRICT, DEFAULT, PERMISSIVE
 
 # Errors
 from grail.errors import (
@@ -29,7 +29,7 @@ from grail.errors import (
 )
 
 # Check result types
-from grail._types import CheckResult, CheckMessage, ScriptEvent
+from grail._types import CheckResult, CheckMessage, ScriptEvent, ExternalSpec, InputSpec
 
 # Define public API
 __all__ = [
@@ -37,11 +37,15 @@ __all__ = [
     "load",
     "run",
     "run_sync",
+    "GrailScript",
     # Declarations
     "external",
     "Input",
     # Limits
     "Limits",
+    "STRICT",
+    "DEFAULT",
+    "PERMISSIVE",
     # Errors
     "GrailError",
     "ParseError",
@@ -56,4 +60,7 @@ __all__ = [
     "CheckMessage",
     # Events
     "ScriptEvent",
+    # Types
+    "ExternalSpec",
+    "InputSpec",
 ]

@@ -203,10 +203,9 @@ class GrailScript:
         Falls back to Limits.default() if no limits are provided anywhere.
         """
         base = self.limits
-        if base is None and override_limits is None:
-            return Limits.default().to_monty()
         if base is None:
-            assert override_limits is not None
+            if override_limits is None:
+                return Limits.default().to_monty()
             return override_limits.to_monty()
         if override_limits is None:
             return base.to_monty()
@@ -486,9 +485,7 @@ class GrailScript:
         # Validate output if model provided
         if output_model is not None:
             try:
-                result = (
-                    output_model(**result) if isinstance(result, dict) else output_model(result)
-                )
+                result = output_model.model_validate(result)
             except Exception as e:
                 raise OutputError(f"Output validation failed: {e}", validation_errors=e)
 
