@@ -1,6 +1,6 @@
 """Test type stub generation."""
 
-from grail._types import ExternalSpec, InputSpec, ParamSpec
+from grail._types import ExternalSpec, InputSpec, ParameterSpec
 from grail.stubs import generate_stubs
 
 
@@ -10,7 +10,7 @@ def test_generate_simple_stub() -> None:
         "double": ExternalSpec(
             name="double",
             is_async=True,
-            parameters=[ParamSpec("n", "int", None)],
+            parameters=[ParameterSpec("n", "int", None)],
             return_type="int",
             docstring="Double a number.",
             lineno=1,
@@ -42,7 +42,7 @@ def test_stub_with_any_import() -> None:
         "fetch": ExternalSpec(
             name="fetch",
             is_async=True,
-            parameters=[ParamSpec("url", "str", None)],
+            parameters=[ParameterSpec("url", "str", None)],
             return_type="dict[str, Any]",
             docstring=None,
             lineno=1,
@@ -63,8 +63,8 @@ def test_stub_with_defaults() -> None:
             name="process",
             is_async=False,
             parameters=[
-                ParamSpec("x", "int", None),
-                ParamSpec("y", "int", 10),
+                ParameterSpec("x", "int", None),
+                ParameterSpec("y", "int", 10),
             ],
             return_type="int",
             docstring=None,

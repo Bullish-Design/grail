@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from grail.artifacts import ArtifactsManager
-from grail._types import CheckResult, ExternalSpec, InputSpec, ParamSpec
+from grail._types import CheckResult, ExternalSpec, InputSpec, ParameterSpec
 
 
 def test_creates_directory_structure(tmp_path):
@@ -15,7 +15,7 @@ def test_creates_directory_structure(tmp_path):
         "test_func": ExternalSpec(
             name="test_func",
             is_async=True,
-            parameters=[ParamSpec("x", "int", None)],
+            parameters=[ParameterSpec("x", "int", None)],
             return_type="str",
             docstring="Test",
             lineno=1,
@@ -77,7 +77,7 @@ def test_json_artifacts_are_valid(tmp_path):
     mgr = ArtifactsManager(tmp_path / ".grail")
 
     externals = {
-        "func": ExternalSpec("func", True, [ParamSpec("x", "int", 10)], "str", "Doc", 1, 0)
+        "func": ExternalSpec("func", True, [ParameterSpec("x", "int", 10)], "str", "Doc", 1, 0)
     }
     inputs = {"x": InputSpec("x", "int", None, True, 1, 0)}
     check_result = CheckResult("test.pym", True, [], [], {})

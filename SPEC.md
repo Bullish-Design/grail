@@ -17,7 +17,7 @@
 
 ## 1. Introduction
 
-Grail v2 is a Python library that provides a transparent, first-class programming experience for Monty (a secure Python-like interpreter written in Rust). Grail's purpose is to eliminate friction when writing code for Monty while maintaining visibility into Monty's limitations.
+Grail v3 is a Python library that provides a transparent, first-class programming experience for Monty (a secure Python-like interpreter written in Rust). Grail's purpose is to eliminate friction when writing code for Monty while maintaining visibility into Monty's limitations.
 
 ### Goals
 
@@ -46,9 +46,11 @@ Load and parse a `.pym` file.
 
 **Parameters**:
 - `path` (`str | Path`): Path to the `.pym` file (required)
-- `limits` (`dict | None`): Resource limits (default: `None`)
+- `limits` (`Limits | None`): Resource limits (default: `Limits.default()`)
 - `files` (`dict[str, str | bytes] | None`): Virtual filesystem files (default: `None`)
+- `environ` (`dict[str, str] | None`): Virtual environment variables (default: `None`)
 - `grail_dir` (`str | Path | None`): Directory for generated artifacts (default: `".grail"`, `None` disables)
+- `dataclass_registry` (`list[type] | None`): Types available for `isinstance()` checks (default: `None`)
 
 **Returns**: `GrailScript` instance
 
@@ -60,8 +62,9 @@ Load and parse a `.pym` file.
 **Example**:
 ```python
 import grail
+from grail import Limits
 
-script = grail.load("analysis.pym", limits={"max_memory": "16mb"})
+script = grail.load("analysis.pym", limits=Limits.strict())
 ```
 
 #### `grail.run(code, inputs) -> Any`
@@ -71,6 +74,9 @@ Execute inline Monty code (escape hatch for simple cases).
 **Parameters**:
 - `code` (`str`): Monty code to execute (required)
 - `inputs` (`dict[str, Any]`): Input values (default: `{}`)
+- `limits` (`Limits | None`): Resource limits
+- `environ` (`dict[str, str] | None`): Virtual environment variables
+- `print_callback` (`Callable[[str, str], None] | None`): Callback for print output
 
 **Returns**: Result of final expression in code
 
@@ -84,6 +90,10 @@ result = await grail.run("x + y", inputs={"x": 1, "y": 2})
 
 **Note**: This is intentionally minimal — no externals, no type checking, no artifact generation. For complex scripts, use `.pym` files.
 
+#### `grail.run_sync(code, inputs) -> Any`
+
+Synchronous version of `grail.run()`.
+
 ### 2.2 GrailScript Class
 
 #### Properties
@@ -96,7 +106,7 @@ result = await grail.run("x + y", inputs={"x": 1, "y": 2})
 | `inputs` | `dict[str, InputSpec]` | Extracted input specs |
 | `monty_code` | `str` | The processed code string for Monty |
 | `stubs` | `str` | Generated type stub string |
-| `limits` | `dict` | Active resource limits |
+| `limits` | `Limits` | Active resource limits |
 
 #### Methods
 
@@ -105,18 +115,21 @@ result = await grail.run("x + y", inputs={"x": 1, "y": 2})
 Execute the script in Monty and return the result.
 
 **Parameters**:
-- `inputs` (`dict[str, Any]`): Input values (default: `{}`)
-- `externals` (`dict[str, Callable]`): External function implementations (default: `{}`)
+- `inputs` (`dict[str, Any] | None`): Input values (default: `{}`)
+- `externals` (`dict[str, Callable] | None`): External function implementations (default: `{}`)
 - `output_model` (`type[BaseModel] | None`): Optional Pydantic model to validate return value (default: `None`)
-- `files` (`dict | None`): Override files from `load()` (default: `None`)
-- `limits` (`dict | None`): Override limits from `load()` (default: `None`)
+- `files` (`dict[str, str | bytes] | None`): Override files from `load()` (default: `None`)
+- `environ` (`dict[str, str] | None`): Override environ from `load()` (default: `None`)
+- `limits` (`Limits | None`): Override limits from `load()` (default: `None`)
+- `print_callback` (`Callable[[str, str], None] | None`): Callback for print() output (default: `None`)
+- `on_event` (`Callable[[ScriptEvent], None] | None`): Callback for lifecycle events (default: `None`)
+- `strict_validation` (`bool`): If `False`, extra inputs/externals produce warnings instead of errors (default: `True`)
 
 **Behavior**:
 - Validates all required inputs are provided
 - Validates all declared externals have implementations
-- Warns if extra inputs/externals are provided
-- Calls `pydantic_monty.Monty()` with processed code and stubs
-- Calls `pydantic_monty.run_monty_async()`
+- Warns if extra inputs/externals are provided (in non-strict mode)
+- Calls Monty with processed code and stubs
 - Writes stdout/stderr to `.grail/<name>/run.log`
 - Returns script's final expression value
 - If `output_model` provided, validates result and returns model instance
@@ -125,7 +138,7 @@ Execute the script in Monty and return the result.
 - `grail.InputError`: Missing required input or wrong type
 - `grail.ExternalError`: Missing external function implementation
 - `grail.ExecutionError`: Monty runtime error
-- `grail.LimitError`: Resource limit exceeded
+- `grail.LimitError`: Resource limit exceeded (NOT a subclass of ExecutionError)
 - `grail.OutputError`: Output validation failed
 
 **Example**:
@@ -142,7 +155,7 @@ result = await script.run(
 
 ##### `script.run_sync(inputs, externals, **kwargs) -> Any`
 
-Synchronous wrapper around `run()`.
+Synchronous wrapper around `run()`. Uses `asyncio.run()` internally.
 
 **Parameters**: Same as `run()`
 
@@ -170,34 +183,38 @@ if not result.valid:
         print(f"{error.lineno}:{error.col_offset}: {error.code} {error.message}")
 ```
 
-##### `script.start(inputs, externals) -> Snapshot`
+### 2.3 Limits Class
 
-Begin resumable execution (pause/resume pattern).
-
-**Parameters**:
-- `inputs` (`dict[str, Any]`): Input values
-- `externals` (`dict[str, Callable]`): External function implementations
-
-**Returns**: `Snapshot` object
-
-**Example**:
 ```python
-snapshot = script.start(
-    inputs={"user_id": 42},
-    externals={"fetch_data": fetch_data, "save_result": save_result},
+from grail import Limits
+
+# Presets
+Limits.strict()      # 8 MB memory, 500ms duration, 120 recursion depth
+Limits.default()     # 16 MB memory, 2s duration, 200 recursion depth
+Limits.permissive()  # 64 MB memory, 5s duration, 400 recursion depth
+
+# Custom
+limits = Limits(
+    max_memory="32mb",
+    max_duration="1.5s",
+    max_recursion=300,
+    max_allocations=100000,
+    gc_interval=5000,
 )
-
-while not snapshot.is_complete:
-    name = snapshot.function_name
-    args = snapshot.args
-    kwargs = snapshot.kwargs
-    result = await externals[name](*args, **kwargs)
-    snapshot = snapshot.resume(return_value=result)
-
-final_result = snapshot.value
 ```
 
-### 2.3 Declarations (for `.pym` files)
+**Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `max_memory` | `int \| str \| None` | Max heap memory in bytes (or `"16mb"`) |
+| `max_duration` | `float \| str \| None` | Max execution time in seconds (or `"2s"`) |
+| `max_recursion` | `int \| None` | Max call stack depth |
+| `max_allocations` | `int \| None` | Max number of heap allocations |
+| `gc_interval` | `int \| None` | GC frequency (every N allocations) |
+
+`Limits` is a **frozen** Pydantic model — immutable after creation.
+
+### 2.4 Declarations (for `.pym` files)
 
 #### `grail.external`
 
@@ -231,91 +248,15 @@ department: str = Input("department", default="Engineering")
 ```
 
 **Parameters**:
-- `name` (`str`): Input variable name
+- `name` (`str`): Input variable name (must match variable name)
 - `default` (`Any | None`): Optional default value
 
 **Requirements**:
 - Must have type annotation
 
-### 2.4 Snapshot Class
+### 2.5 Snapshot Class (Deferred)
 
-#### Properties
-
-| Property | Type | Description |
-|---|---|---|
-| `function_name` | `str` | Name of function being called |
-| `args` | `tuple[Any, ...]` | Positional arguments |
-| `kwargs` | `dict[str, Any]` | Keyword arguments |
-| `is_complete` | `bool` | Whether execution is finished |
-| `call_id` | `int` | Unique identifier for this call |
-
-#### Methods
-
-##### `snapshot.resume(**kwargs) -> Snapshot | Any`
-
-Resume execution with return value or exception.
-
-**Parameters**:
-- `return_value` (`Any`): Value to return from external function
-- `exception` (`BaseException`): Exception to raise in Monty
-
-**Returns**: New `Snapshot` if more calls pending, final result if complete
-
-**Example**:
-```python
-# Return value
-snapshot = snapshot.resume(return_value=some_result)
-
-# Raise exception
-snapshot = snapshot.resume(exception=ValueError("error"))
-```
-
-##### `snapshot.dump() -> bytes`
-
-Serialize snapshot to bytes.
-
-**Returns**: Serialized snapshot data
-
-**Example**:
-```python
-data = snapshot.dump()
-```
-
-##### `Snapshot.load(data) -> Snapshot` (static)
-
-Deserialize snapshot from bytes.
-
-**Parameters**:
-- `data` (`bytes`): Serialized snapshot data
-
-**Returns**: Restored `Snapshot` instance
-
-**Example**:
-```python
-snapshot = Snapshot.load(data)
-```
-
-### 2.5 Resource Limits Presets
-
-```python
-grail.STRICT = {
-    "max_memory": "8mb",
-    "max_duration": "500ms",
-    "max_recursion": 120,
-}
-
-grail.DEFAULT = {
-    "max_memory": "16mb",
-    "max_duration": "2s",
-    "max_recursion": 200,
-}
-
-grail.PERMISSIVE = {
-    "max_memory": "64mb",
-    "max_duration": "5s",
-    "max_recursion": 400,
-}
-```
+The snapshot/resume feature is deferred. When Monty adds native support, Grail will expose it.
 
 ### 2.6 Error Types
 
@@ -326,15 +267,17 @@ grail.GrailError (base)
 ├── grail.InputError
 ├── grail.ExternalError
 ├── grail.ExecutionError
-│   └── grail.LimitError
+│   └── grail.LimitError  # NOTE: LimitError is NOT a subclass of ExecutionError
 └── grail.OutputError
 ```
+
+**Important**: `LimitError` inherits directly from `GrailError`, NOT from `ExecutionError`. This is intentional — resource limits are fundamentally different from code bugs.
 
 ### 2.7 Check Result Types
 
 ```python
 @dataclass
-class grail.CheckMessage:
+class CheckMessage:
     code: str                      # "E001", "W001", etc.
     lineno: int
     col_offset: int
@@ -345,12 +288,29 @@ class grail.CheckMessage:
     suggestion: str | None
 
 @dataclass
-class grail.CheckResult:
+class CheckResult:
     file: str
     valid: bool
     errors: list[CheckMessage]
     warnings: list[CheckMessage]
     info: dict[str, Any]
+    messages: list[CheckMessage]  # Combined errors + warnings
+```
+
+### 2.8 ScriptEvent
+
+```python
+@dataclass
+class ScriptEvent:
+    type: str  # "run_start", "run_complete", "run_error", "print", "check_start", "check_complete"
+    script_name: str
+    timestamp: float
+    text: str | None = None
+    duration_ms: float | None = None
+    error: str | None = None
+    input_count: int | None = None
+    external_count: int | None = None
+    result_summary: str | None = None
 ```
 
 ---
@@ -367,6 +327,7 @@ class grail.CheckResult:
 # analysis.pym
 
 from grail import external, Input
+from typing import Any
 
 # --- Declarations Section ---
 # These are metadata markers that grail tooling reads.
@@ -405,7 +366,7 @@ members = team_data.get("members", [])
 2. `@external` functions **MUST** have complete type annotations (parameters + return)
 3. `@external` function bodies **MUST** be `...` (Ellipsis)
 4. `Input()` declarations **MUST** have a type annotation
-5. All imports except `from grail import ...` and `from typing import ...` are forbidden
+5. All imports except `from grail import ...`, `from typing import ...`, and `from __future__ import ...` are forbidden
 6. File's return value is its final expression (like a Jupyter cell)
 
 ### 3.4 Supported Python Features
@@ -417,15 +378,17 @@ members = team_data.get("members", [])
 - Control flow (if/elif/else, for, while, try/except/finally)
 - F-strings
 - Type annotations
+- `isinstance()` (for registered dataclasses)
+- `os.getenv()` (for virtual environment variables)
 
 ### 3.5 Unsupported Python Features
 
-- Classes (deferred until Monty supports them)
+- Classes
 - Generators and `yield`
 - `with` statements
-- `match` statements (deferred until Monty supports them)
-- Lambda expressions (deferred until Monty supports them)
-- Imports beyond `grail` and `typing`
+- `match` statements
+- Lambda expressions
+- Imports beyond `grail`, `typing`, and `__future__`
 - Most of the standard library
 
 ---
@@ -480,7 +443,11 @@ grail check --strict
 | Missing type annotations on `@external` | E006 | Error | Parameters and return type required |
 | `@external` with non-ellipsis body | E007 | Error | Body must be `...` |
 | `Input()` without type annotation | E008 | Error | Type required |
-| Monty type checker errors | E1xx | Error | From `ty` |
+| `global` statement | E009 | Error | Use params/returns |
+| `nonlocal` statement | E010 | Error | Use params/returns |
+| `del` statement | E011 | Error | Don't delete variables |
+| `lambda` expression | E012 | Error | Use `def` instead |
+| Monty type checker errors | E100 | Error | From `ty` |
 | Bare dict/list as return value | W001 | Warning | Consider naming for clarity |
 | Unused `@external` function | W002 | Warning | Declared but never called |
 | Unused `Input()` variable | W003 | Warning | Declared but never referenced |
@@ -507,29 +474,6 @@ grail run analysis.pym --host host.py
 
 # Run with inline inputs
 grail run analysis.pym --host host.py --input budget_limit=5000
-```
-
-**Host File Format**:
-```python
-# host.py
-from grail import load
-from data import get_team_members, get_expenses, get_custom_budget
-
-async def main():
-    script = load("analysis.pym")
-    result = await script.run(
-        inputs={"budget_limit": 5000.0, "department": "Engineering"},
-        externals={
-            "get_team_members": get_team_members,
-            "get_expenses": get_expenses,
-            "get_custom_budget": get_custom_budget,
-        },
-    )
-    print(result)
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
 ```
 
 #### `grail watch [dir]`
@@ -563,120 +507,37 @@ grail clean
 ```
 .grail/
 ├── <script_name>/
-│   ├── stubs.pyi       # Generated type stubs
-│   ├── check.json      # Validation results
-│   ├── externals.json  # External function specs
-│   ├── inputs.json     # Input declarations
-│   ├── monty_code.py  # Stripped Monty code
-│   └── run.log        # Execution output
+│   ├── stubs.pyi        # Generated type stubs
+│   ├── check.json       # Validation results
+│   ├── externals.json   # External function specs
+│   ├── inputs.json      # Input declarations
+│   ├── monty_code.py   # Stripped Monty code
+│   └── run.log         # Execution output
 ```
 
 ### 5.2 stubs.pyi
 
 Type stubs sent to Monty's `ty` type checker.
 
-```python
-# .grail/analysis/stubs.pyi
-# Auto-generated by grail — do not edit
-from typing import Any
-
-budget_limit: float
-department: str
-
-async def get_team_members(department: str) -> dict[str, Any]:
-    """Get list of team members for a department."""
-    ...
-
-async def get_expenses(user_id: int, quarter: str, category: str) -> dict[str, Any]:
-    """Get expense line items for a user."""
-    ...
-
-async def get_custom_budget(user_id: int) -> dict[str, Any] | None:
-    """Get custom budget for a user if they have one."""
-    ...
-```
-
 ### 5.3 check.json
 
 Results of `grail check`.
-
-```json
-{
-  "file": "analysis.pym",
-  "valid": true,
-  "errors": [],
-  "warnings": [
-    {
-      "line": 34,
-      "column": 4,
-      "code": "W001",
-      "message": "Bare dict as return value — consider assigning to a variable for clarity"
-    }
-  ],
-  "info": {
-    "externals_count": 3,
-    "inputs_count": 2,
-    "lines_of_code": 28,
-    "monty_features_used": ["async_await", "for_loop", "list_comprehension", "f_string"]
-  }
-}
-```
 
 ### 5.4 externals.json
 
 Machine-readable extraction of external function signatures.
 
-```json
-{
-  "externals": [
-    {
-      "name": "get_team_members",
-      "async": true,
-      "parameters": [
-        {"name": "department", "type": "str", "default": null}
-      ],
-      "return_type": "dict[str, Any]",
-      "docstring": "Get list of team members for a department."
-    }
-  ]
-}
-```
-
 ### 5.5 inputs.json
 
 Machine-readable extraction of input declarations.
-
-```json
-{
-  "inputs": [
-    {"name": "budget_limit", "type": "float", "required": true, "default": null},
-    {"name": "department", "type": "str", "required": false, "default": "Engineering"}
-  ]
-}
-```
 
 ### 5.6 monty_code.py
 
 Actual Python code sent to Monty interpreter.
 
-```python
-# .grail/analysis/monty_code.py
-# Auto-generated by grail — this is what Monty actually executes
-
-team_data = await get_team_members(department=department)
-members = team_data.get("members", [])
-# ... rest of executable code ...
-```
-
 ### 5.7 run.log
 
 Combined stdout/stderr from execution.
-
-```
-[grail] Running analysis.pym with 2 inputs, 3 externals
-[stdout] Processing 5 team members...
-[grail] Completed in 0.042ms, return value: dict (3 keys)
-```
 
 ---
 
@@ -691,7 +552,7 @@ grail.GrailError (base)
 ├── grail.InputError          # missing/invalid input at runtime
 ├── grail.ExternalError       # missing external function implementation
 ├── grail.ExecutionError      # Monty runtime error
-│   └── grail.LimitError      # resource limit exceeded
+└── grail.LimitError          # resource limit exceeded (NOT a subclass of ExecutionError)
 └── grail.OutputError         # output validation failed
 ```
 
@@ -711,73 +572,17 @@ grail.ExecutionError: analysis.pym:22 — NameError: name 'undefined_var' is not
 Context: This variable is not defined in the script and is not a declared Input().
 ```
 
-### 6.3 Error Descriptions
+### 6.3 Error Details
 
-#### ParseError
-
-Raised when the `.pym` file has Python syntax errors.
-
-**Example**:
-```python
-try:
-    script = grail.load("invalid.pym")
-except grail.ParseError as e:
-    print(f"Syntax error at line {e.lineno}: {e.message}")
-```
-
-#### CheckError
-
-Raised when `@external` or `Input()` declarations are malformed.
-
-**Triggers**:
-- Missing type annotations on `@external` function
-- `@external` function body is not `...`
-- `Input()` call without type annotation
-
-#### InputError
-
-Raised when runtime inputs don't match declared `Input()` specs.
-
-**Triggers**:
-- Missing required input (no default)
-- Input type doesn't match declared type
-
-#### ExternalError
-
-Raised when external functions aren't provided or don't match declarations.
-
-**Triggers**:
-- External function declared but not provided at runtime
-- Extra external function provided (not in `@external` declarations)
-
-#### ExecutionError
-
-Raised when Monty runtime error occurs.
-
-**Triggers**:
-- NameError, TypeError, ValueError, etc.
-- Monty-specific errors
-
-**Includes**:
-- Line/column numbers mapped to `.pym` file
-- Surrounding code context
-- Full Monty traceback in `.grail/<name>/run.log`
-
-#### LimitError
-
-Raised when resource limits are exceeded.
-
-**Triggers**:
-- Memory limit exceeded
-- Duration limit exceeded
-- Recursion depth exceeded
-
-#### OutputError
-
-Raised when output validation against `output_model` fails.
-
-**Triggers**:
-- Return value doesn't match Pydantic model schema
+| Error | Attributes |
+|-------|------------|
+| `ParseError` | `message`, `lineno`, `col_offset` |
+| `CheckError` | `message`, `lineno` |
+| `InputError` | `message`, `input_name` |
+| `ExternalError` | `message`, `function_name` |
+| `ExecutionError` | `message`, `lineno`, `col_offset`, `source_context`, `suggestion` |
+| `LimitError` | `message`, `limit_type` (memory, duration, recursion, allocations) |
+| `OutputError` | `message`, `validation_errors` |
 
 ---
 
@@ -790,34 +595,7 @@ Raised when output validation against `output_model` fails.
 3. Stubs are passed to Monty's built-in `ty` type checker
 4. `grail check` reports type errors before execution
 
-### 7.2 What Gets Generated
-
-**From `.pym` code**:
-```python
-from grail import external, Input
-from typing import Any
-
-budget: float = Input("budget")
-
-@external
-async def get_data(id: int) -> dict[str, Any]:
-    """Fetch data by ID."""
-    ...
-```
-
-**Grail generates**:
-```python
-# .grail/script_name/stubs.pyi
-from typing import Any
-
-budget: float
-
-async def get_data(id: int) -> dict[str, Any]:
-    """Fetch data by ID."""
-    ...
-```
-
-### 7.3 Supported Types
+### 7.2 Supported Types
 
 Stubs support all types that Monty's `ty` checker understands:
 
@@ -827,68 +605,39 @@ Stubs support all types that Monty's `ty` checker understands:
 - `Any`
 - Nested combinations of the above
 
-### 7.4 IDE Integration
-
-Because `.pym` files are valid Python and `@external` functions have real signatures, IDEs provide:
-- Autocomplete for external function parameters
-- Type error highlighting on argument mismatches
-- Hover documentation from docstrings
-- Go-to-definition (lands on the `@external` declaration)
-
-The `grail` package ships with `py.typed` marker and type stubs for `external`, `Input`, etc.
-
 ---
 
 ## 8. Resource Limits Specification
 
 ### 8.1 Design
 
-One level, one dict. No policies, no inheritance, no composition.
+`Limits` is a Pydantic model with preset constructors. No policies, no inheritance, no composition.
 
 ```python
-script = grail.load("analysis.pym", limits={
-    "max_memory": "16mb",
-    "max_duration": "5s",
-    "max_recursion": 200,
-})
+from grail import Limits
+
+script = grail.load("analysis.pym", limits=Limits(
+    max_memory="16mb",
+    max_duration="5s",
+    max_recursion=200,
+))
 ```
 
-### 8.2 Available Limits
+### 8.2 Presets
 
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `max_memory` | `str | int` | `"16mb"` | Maximum memory. String accepts `"16mb"`, `"1gb"`. Int is bytes. |
-| `max_duration` | `str | float` | `"2s"` | Maximum execution time. String accepts `"500ms"`, `"2s"`. Float is seconds. |
-| `max_recursion` | `int` | `200` | Maximum recursion depth |
-| `max_allocations` | `int | None` | `None` | Maximum allocation count (advanced) |
+```python
+Limits.strict()      # 8 MB memory, 500ms duration, 120 recursion depth
+Limits.default()     # 16 MB memory, 2s duration, 200 recursion depth
+Limits.permissive()  # 64 MB memory, 5s duration, 400 recursion depth
+```
 
 ### 8.3 String Format Parsing
 
-**Memory**: `"16mb"` → `16 * 1024 * 1024`, `"1gb"` → `1 * 1024 * 1024 * 1024`
+**Memory**: `"16mb"` → `16 * 1024 * 1024`, `"1gb"` → `1 * 1024 * 1024 * 1024` (case insensitive)
 
-**Duration**: `"500ms"` → `0.5`, `"2s"` → `2.0`, `"1.5s"` → `1.5`
+**Duration**: `"500ms"` → `0.5`, `"2s"` → `2.0`, `"1.5s"` → `1.5` (case insensitive)
 
-**Case insensitive**: `"16MB"`, `"16Mb"`, `"16mb"` all work
-
-### 8.4 Named Presets
-
-```python
-import grail
-
-script = grail.load("analysis.pym", limits=grail.STRICT)
-script = grail.load("analysis.pym", limits=grail.DEFAULT)
-script = grail.load("analysis.pym", limits=grail.PERMISSIVE)
-```
-
-| Preset | Memory | Duration | Recursion |
-|---|---|---|---|
-| `grail.STRICT` | 8mb | 500ms | 120 |
-| `grail.DEFAULT` | 16mb | 2s | 200 |
-| `grail.PERMISSIVE` | 64mb | 5s | 400 |
-
-Presets are plain dicts. No classes, no methods, no inheritance.
-
-### 8.5 Override at Runtime
+### 8.4 Override at Runtime
 
 ```python
 # Load with defaults, override per-run
@@ -896,9 +645,11 @@ script = grail.load("analysis.pym")
 result = await script.run(
     inputs={...},
     externals={...},
-    limits={"max_duration": "10s"},  # override just this one
+    limits=Limits(max_duration="10s"),  # override just this one
 )
 ```
+
+Merging replaces only non-`None` fields from the override.
 
 ---
 
@@ -915,17 +666,15 @@ script = grail.load("analysis.pym", files={
 })
 ```
 
-This maps directly to Monty's `MemoryFile` + `OSAccess`.
-
-### 9.2 In the `.pym` File
+### 9.2 Virtual Environment Variables
 
 ```python
-# analysis.pym
-from pathlib import Path
-
-content = open(Path("/data/customers.csv")).read()
-# or whatever file API Monty supports
+script = grail.load("analysis.pym", environ={
+    "API_KEY": "abc123",
+})
 ```
+
+Inside the script: `os.getenv("API_KEY")` returns `"abc123"`.
 
 ### 9.3 Dynamic Files
 
@@ -939,94 +688,36 @@ result = await script.run(
 )
 ```
 
-### 9.4 No Custom Hooks
-
-If you need dynamic file behavior (e.g., lazily loading files from S3), make it an external function:
-
-```python
-# In the .pym file:
-@external
-async def read_file(path: str) -> str:
-    """Read a file from storage."""
-    ...
-
-content = await read_file("/data/customers.csv")
-```
-
-This is more explicit and doesn't require filesystem abstraction layers.
+Run-time overrides **completely replace** load-time values.
 
 ---
 
 ## 10. Snapshot/Resume Specification
 
-### 10.1 Design
+**Status: Deferred**
 
-Thin wrapper over Monty's native snapshot mechanism.
-
-### 10.2 Usage Pattern
-
-```python
-script = grail.load("workflow.pym")
-
-# Start execution — pauses when an external function is called
-snapshot = script.start(
-    inputs={"user_id": 42},
-    externals={"fetch_data": fetch_data, "save_result": save_result},
-)
-
-# Execution loop
-while not snapshot.is_complete:
-    # The script called an external function — fulfill it
-    name = snapshot.function_name
-    args = snapshot.args
-    kwargs = snapshot.kwargs
-
-    result = await externals[name](*args, **kwargs)
-    snapshot = snapshot.resume(return_value=result)
-
-# Done
-final_result = snapshot.value
-```
-
-### 10.3 Serialization
-
-```python
-# Serialize for storage/transfer
-data = snapshot.dump()  # -> bytes
-
-# Restore later
-snapshot = grail.Snapshot.load(data)
-result = snapshot.resume(return_value=some_result)
-```
-
-This is a direct pass-through to `pydantic_monty.MontySnapshot.dump()` / `.load()`. No base64 wrappers, no custom serialization.
+Snapshot/resume is not included in v3. When Monty adds native support, Grail will expose it.
 
 ---
 
-## Appendix A: Migration from Grail v1
+## Appendix A: Migration from Grail v1/v2
 
 This is a clean break. No automated migration.
 
-### For Grail v1 Users
+### For Previous Grail Users
 
 1. **Convert code strings to `.pym` files** — move sandboxed code out of Python strings
-2. **Replace `MontyContext` with `grail.load()`** — 13 constructor parameters become 3 optional kwargs
+2. **Replace `MontyContext` with `grail.load()`** — many constructor parameters become optional kwargs
 3. **Replace `ToolRegistry` with a plain dict** — `externals={"name": func}`
 4. **Replace `GrailFilesystem` with a plain dict** — `files={"/path": content}`
-5. **Replace resource policies with a limits dict** — `limits={"max_memory": "16mb"}`
+5. **Replace resource policies with `Limits` model** — use `Limits.strict()`, `.default()`, `.permissive()`
 6. **Remove observability code** — add your own `logging`/metrics at application level
 7. **Remove `@secure` decorators** — use `.pym` files instead
 8. **Run `grail check`** — catch Monty compatibility issues immediately
 
 ---
 
-## Appendix B: Version Strategy
-
-Grail v2 will be released as `grail >= 2.0.0` (or a rename, TBD). The `grail >= 0.x` / `1.x` line is frozen — no further development.
-
----
-
-## Appendix C: Public API Summary
+## Appendix B: Public API Summary
 
 **Total: ~15 public symbols**
 
@@ -1034,19 +725,20 @@ Grail v2 will be released as `grail >= 2.0.0` (or a rename, TBD). The `grail >= 
 # Core
 grail.load(path, **options) -> GrailScript
 grail.run(code, inputs) -> Any
+grail.run_sync(code, inputs) -> Any
 
 # Declarations (for .pym files)
 grail.external
 grail.Input(name, default=...)
 
-# Snapshots
-grail.Snapshot
-grail.Snapshot.load(data) -> Snapshot
-
 # Limits
-grail.STRICT
-grail.DEFAULT
-grail.PERMISSIVE
+grail.Limits
+grail.Limits.strict() -> Limits
+grail.Limits.default() -> Limits
+grail.Limits.permissive() -> Limits
+
+# Events
+grail.ScriptEvent
 
 # Errors
 grail.GrailError

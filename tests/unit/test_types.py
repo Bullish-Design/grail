@@ -5,7 +5,7 @@ from grail._types import (
     CheckResult,
     ExternalSpec,
     InputSpec,
-    ParamSpec,
+    ParameterSpec,
     ParseResult,
     SourceMap,
 )
@@ -15,7 +15,7 @@ def test_external_spec_creation() -> None:
     spec = ExternalSpec(
         name="test_func",
         is_async=True,
-        parameters=[ParamSpec("x", "int", None)],
+        parameters=[ParameterSpec("x", "int", None)],
         return_type="str",
         docstring="Test function",
         lineno=1,

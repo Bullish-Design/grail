@@ -49,6 +49,7 @@ markers = [
   "unit: fast unit tests",
   "integration: tests touching pydantic_monty runtime",
   "contract: fixture-driven visible input/output contract tests",
+  "slow: tests that take a long time to run",
 ]
 
 [tool.ruff]

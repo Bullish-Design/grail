@@ -2,6 +2,7 @@
 
 import argparse
 import functools
+import logging
 import sys
 import json
 import inspect
@@ -12,6 +13,8 @@ import grail
 from grail.script import load
 from grail.artifacts import ArtifactsManager, ARTIFACTS_DIR_NAME
 from grail.errors import GrailError, ParseError, CheckError
+
+logger = logging.getLogger(__name__)
 
 
 def cli_error_handler(func):

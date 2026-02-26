@@ -1,99 +1,106 @@
-"""Test direct integration with Monty."""
+"""Integration tests exercising the Grail API end-to-end.
+
+These tests verify that Grail correctly wraps pydantic-monty for
+basic execution, external functions, resource limits, type checking,
+and error handling.
+"""
+
+import tempfile
+from pathlib import Path
 
 import pytest
 
-# This requires pydantic-monty to be installed
 pytest.importorskip("pydantic_monty")
 
-import pydantic_monty
+import grail
 
 
 @pytest.mark.integration
-def test_basic_monty_execution():
-    """Test calling Monty with simple code."""
-    code = "x = 1 + 2\nx"
-
-    m = pydantic_monty.Monty(code)
-    result = m.run(inputs=None)
-
+async def test_basic_execution():
+    """Test running simple inline code through grail.run()."""
+    result = await grail.run("x = 1 + 2\nx")
     assert result == 3
 
 
 @pytest.mark.integration
-async def test_monty_with_external_function():
-    """Test Monty with external functions."""
-    code = """
+async def test_with_external_function(tmp_path):
+    """Test loading and running a .pym file with external functions."""
+    pym_path = tmp_path / "externals.pym"
+    pym_path.write_text(
+        """
+from grail import external, Input
+
+x: int = Input("x")
+
+@external
+async def double(n: int) -> int:
+    ...
+
 result = await double(x)
 result
 """
+    )
 
-    stubs = """
-x: int
-
-async def double(n: int) -> int:
-    ...
-"""
+    script = grail.load(pym_path, grail_dir=None)
 
     async def double_impl(n: int) -> int:
         return n * 2
 
-    m = pydantic_monty.Monty(
-        code, type_check_stubs=stubs, inputs=["x"], external_functions=["double"]
+    result = await script.run(
+        inputs={"x": 5},
+        externals={"double": double_impl},
     )
-    result = await pydantic_monty.run_monty_async(
-        m, inputs={"x": 5}, external_functions={"double": double_impl}
-    )
-
     assert result == 10
 
 
 @pytest.mark.integration
-def test_monty_with_resource_limits():
-    """Test Monty with resource limits."""
-    code = "x = 1\nx"
+async def test_with_resource_limits(tmp_path):
+    """Test execution with resource limits applied."""
+    pym_path = tmp_path / "limited.pym"
+    pym_path.write_text(
+        """
+from grail import Input
 
-    m = pydantic_monty.Monty(
-        code
-        # max_memory=1024 * 1024,  # 1MB
-        # max_duration_secs=1.0,
-        # max_recursion_depth=100,
+x: int = Input("x")
+
+x
+"""
     )
 
-    result = m.run(
-        inputs=None,
-        limits={"max_memory": 1024 * 1024, "max_duration_secs": 1.0, "max_recursion_depth": 100},
+    script = grail.load(
+        pym_path,
+        limits=grail.Limits.strict(),
+        grail_dir=None,
     )
+
+    result = await script.run(inputs={"x": 1})
     assert result == 1
 
 
 @pytest.mark.integration
-def test_monty_type_checking():
-    """Test Monty's type checker integration."""
-    code = """
+def test_type_checking(tmp_path):
+    """Test that check() validates type stubs correctly."""
+    pym_path = tmp_path / "typecheck.pym"
+    pym_path.write_text(
+        """
+from grail import external
+
+@external
+async def get_data(id: str) -> dict:
+    ...
+
 result = await get_data("test")
 result
 """
+    )
 
-    stubs = """
-async def get_data(id: str) -> dict:
-    ...
-"""
-
-    # This should type-check successfully
-    m = pydantic_monty.Monty(code, type_check=True, type_check_stubs=stubs)
-
-    # Note: Actual execution would need the external function
+    script = grail.load(pym_path, grail_dir=None)
+    check_result = script.check()
+    assert check_result.valid is True
 
 
 @pytest.mark.integration
-async def test_monty_error_handling():
-    """Test that Monty errors can be caught and inspected."""
-    code = "x = undefined_variable"
-
-    m = pydantic_monty.Monty(code)
-
-    with pytest.raises(Exception) as exc_info:
-        await pydantic_monty.run_monty_async(m, inputs=None)
-
-    # Should get some kind of error about undefined variable
-    assert "undefined" in str(exc_info.value).lower() or "name" in str(exc_info.value).lower()
+async def test_error_handling():
+    """Test that runtime errors are wrapped as ExecutionError."""
+    with pytest.raises(grail.ExecutionError):
+        await grail.run("y = undefined_variable")

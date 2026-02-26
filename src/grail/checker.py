@@ -25,6 +25,10 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
     - E003: with statements
     - E004: match statements
     - E005: Forbidden imports
+    - E009: global statements
+    - E010: nonlocal statements
+    - E011: del statements
+    - E012: Lambda expressions
     """
 
     def __init__(self, source_lines: list[str]):
@@ -191,6 +195,22 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
         self.features_used.add("f_string")
         self.generic_visit(node)
 
+    def visit_Global(self, node: ast.Global) -> None:
+        """Detect global statements (not supported in Monty)."""
+        self.errors.append(
+            CheckMessage(
+                code="E009",
+                lineno=node.lineno,
+                col_offset=node.col_offset,
+                end_lineno=node.end_lineno,
+                end_col_offset=node.end_col_offset,
+                severity="error",
+                message="'global' statements are not supported in Monty",
+                suggestion="Avoid using global - restructure your code to use function parameters and return values",
+            )
+        )
+        self.generic_visit(node)
+
     def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
         """Detect nonlocal statements (not supported in Monty)."""
         self.errors.append(
@@ -219,6 +239,22 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
                 severity="error",
                 message="'del' statements are not supported in Monty",
                 suggestion="Avoid using del - restructure your code to not need variable deletion",
+            )
+        )
+        self.generic_visit(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        """Detect lambda expressions (not supported in Monty)."""
+        self.errors.append(
+            CheckMessage(
+                code="E012",
+                lineno=node.lineno,
+                col_offset=node.col_offset,
+                end_lineno=node.end_lineno,
+                end_col_offset=node.end_col_offset,
+                severity="error",
+                message="Lambda expressions are not supported in Monty",
+                suggestion="Use a regular function definition (def) instead",
             )
         )
         self.generic_visit(node)

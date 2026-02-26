@@ -1,10 +1,13 @@
 """Artifacts manager for .grail/ directory."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from grail._types import CheckResult, ExternalSpec, InputSpec
+
+logger = logging.getLogger(__name__)
 
 ARTIFACTS_DIR_NAME = ".grail"
 

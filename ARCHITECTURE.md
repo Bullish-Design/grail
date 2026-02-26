@@ -2,7 +2,7 @@
 
 ## Overview
 
-Grail v2 is a minimalist Python library that provides a transparent, first-class programming experience for Monty (a secure Python interpreter written in Rust). Grail sits between developers and Monty, eliminating friction while maintaining visibility into Monty's limitations.
+Grail v3 is a minimalist Python library that provides a transparent, first-class programming experience for Monty (a secure Python interpreter written in Rust). Grail sits between developers and Monty, eliminating friction while maintaining visibility into Monty's limitations.
 
 ### Core Design Principles
 
@@ -36,12 +36,12 @@ Grail v2 is a minimalist Python library that provides a transparent, first-class
 │  └──────────────┘      └──────────────┘      └──────────────┘ │
 │                                                                   │
 └─────────────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-              ┌───────────────────────────────┐
-              │    Monty (pydantic-monty)   │
-              │   Rust Python Interpreter    │
-              └───────────────────────────────┘
+                               │
+                               ▼
+               ┌───────────────────────────────┐
+               │    Monty (pydantic-monty)   │
+               │   Rust Python Interpreter    │
+               └───────────────────────────────┘
 ```
 
 ## Module Structure
@@ -49,18 +49,19 @@ Grail v2 is a minimalist Python library that provides a transparent, first-class
 ```
 src/grail/
 ├── __init__.py          # Public API surface (~15 symbols)
-├── script.py            # GrailScript: load, parse, run, check, start
-├── parser.py            # Parse .pym files, extract @external and Input()
-├── checker.py           # Monty compatibility validation
+├── script.py            # GrailScript: load, parse, run, check
+├── parser.py           # Parse .pym files, extract @external and Input()
+├── checker.py          # Monty compatibility validation
 ├── stubs.py            # Generate .pyi stubs from declarations
-├── codegen.py           # Transform .pym → monty_code.py
-├── artifacts.py         # Manage .grail/ directory artifacts
-├── limits.py            # Resource limits parsing & presets
-├── snapshot.py          # Thin wrapper over Monty's pause/resume
-├── errors.py            # Error hierarchy with source mapping
-├── cli.py               # CLI entry point (grail check, run, init, watch)
-├── _types.pyi           # Type stubs for grail module (PEP 561)
-└── py.typed             # PEP 561 marker
+├── codegen.py          # Transform .pym → monty_code.py
+├── artifacts.py       # Manage .grail/ directory artifacts
+├── limits.py           # Resource limits parsing & presets (Pydantic model)
+├── errors.py           # Error hierarchy with source mapping
+├── cli.py              # CLI entry point (grail check, run, init, watch)
+├── _types.py          # Type stubs for grail module (PEP 561)
+├── _external.py       # @external decorator implementation
+├── _input.py          # Input() function implementation
+└── py.typed           # PEP 561 marker
 ```
 
 ## Core Components
@@ -111,8 +112,8 @@ class ParseResult:
 **Responsibility**: Validate Monty compatibility and detect errors
 
 **Key Operations**:
-- Detect forbidden Python features (classes, generators, `with`, `match`)
-- Validate import statements (only `grail` and `typing` allowed)
+- Detect forbidden Python features (classes, generators, `with`, `match`, lambda, etc.)
+- Validate import statements (only `grail`, `typing`, and `__future__` allowed)
 - Check `@external` function bodies are `...` (Ellipsis)
 - Check `Input()` has type annotations
 - Run Monty's `ty` type checker on generated stubs
@@ -214,11 +215,11 @@ class CodegenResult:
 .grail/
 ├── <script_name>/
 │   ├── stubs.pyi        # Generated type stubs
-│   ├── check.json        # Validation results
-│   ├── externals.json    # External function specs
-│   ├── inputs.json       # Input declarations
+│   ├── check.json       # Validation results
+│   ├── externals.json   # External function specs
+│   ├── inputs.json      # Input declarations
 │   ├── monty_code.py    # Stripped Monty code
-│   └── run.log          # Execution output
+│   └── run.log         # Execution output
 ```
 
 ### 6. Core Script (`script.py`)
@@ -231,6 +232,7 @@ class CodegenResult:
 1. **Load Phase** (`grail.load()`):
    - Read `.pym` file
    - Parse with `parser.py`
+   - Validate with `checker.py`
    - Generate stubs with `stubs.py`
    - Generate code with `codegen.py`
    - Write artifacts
@@ -246,14 +248,11 @@ class CodegenResult:
    - Validate externals against `@external` declarations
    - Transform resource limits to Monty format
    - Transform files dict to `OSAccess` with `MemoryFile`
-   - Call `pydantic_monty.run_monty_async()`
+   - Transform environ dict to virtual env vars
+   - Call Monty
    - Map errors back to `.pym` line numbers
    - Write run.log
    - Return result
-
-4. **Start Phase** (`script.start()`):
-   - Return `grail.Snapshot` wrapper
-   - Expose Monty's pause/resume interface
 
 **Data Structures**:
 ```python
@@ -265,13 +264,12 @@ class GrailScript:
     monty_code: str
     stubs: str
     source_map: SourceMap
-    limits: dict[str, Any] | None
+    limits: Limits | None
     grail_dir: Path | None
 
     def run(self, inputs, externals, **kwargs) -> Any
     def run_sync(self, inputs, externals, **kwargs) -> Any
     def check(self) -> CheckResult
-    def start(self, inputs, externals) -> Snapshot
 ```
 
 ### 7. Limits (`limits.py`)
@@ -281,63 +279,32 @@ class GrailScript:
 **Key Operations**:
 - Parse string formats (`"16mb"` → `16 * 1024 * 1024`, `"2s"` → `2.0`)
 - Validate limit values
-- Provide named presets (`STRICT`, `DEFAULT`, `PERMISSIVE`)
+- Provide named presets via class methods (`strict()`, `default()`, `permissive()`)
 - Merge limits (load-time with run-time overrides)
 
-**Data Structures**:
+**Implementation**: Frozen Pydantic model
+
 ```python
-STRICT: ResourceLimits = {
-    "max_memory": 8_388_608,      # 8MB
-    "max_duration_secs": 0.5,
-    "max_recursion_depth": 120,
-}
+class Limits(BaseModel):
+    max_memory: int | str | None = None
+    max_duration: float | str | None = None
+    max_recursion: int | None = None
+    max_allocations: int | None = None
+    gc_interval: int | None = None
 
-DEFAULT: ResourceLimits = {
-    "max_memory": 16_777_216,     # 16MB
-    "max_duration_secs": 2.0,
-    "max_recursion_depth": 200,
-}
-
-PERMISSIVE: ResourceLimits = {
-    "max_memory": 67_108_864,     # 64MB
-    "max_duration_secs": 5.0,
-    "max_recursion_depth": 400,
-}
+    def strict() -> Limits: ...
+    def default() -> Limits: ...
+    def permissive() -> Limits: ...
 ```
 
-### 8. Snapshot (`snapshot.py`)
+**Presets**:
+| Preset | Memory | Duration | Recursion |
+|--------|--------|----------|-----------|
+| `strict()` | 8 MB | 500 ms | 120 |
+| `default()` | 16 MB | 2 s | 200 |
+| `permissive()` | 64 MB | 5 s | 400 |
 
-**Responsibility**: Thin wrapper over Monty's pause/resume mechanism
-
-**Key Operations**:
-- Wrap `pydantic_monty.MontySnapshot`
-- Expose `function_name`, `args`, `kwargs`, `is_complete`
-- Wrap `resume()` method
-- Wrap `dump()` / `load()` for serialization
-
-**Data Structures**:
-```python
-class Snapshot:
-    monty_snapshot: pydantic_monty.MontySnapshot
-    source_map: SourceMap
-
-    @property
-    def function_name(self) -> str
-    @property
-    def args(self) -> tuple[Any, ...]
-    @property
-    def kwargs(self) -> dict[str, Any]
-    @property
-    def is_complete(self) -> bool
-
-    def resume(self, **kwargs) -> Snapshot | Any
-    def dump(self) -> bytes
-
-    @staticmethod
-    def load(data: bytes) -> Snapshot
-```
-
-### 9. Errors (`errors.py`)
+### 8. Errors (`errors.py`)
 
 **Responsibility**: Error hierarchy with source mapping
 
@@ -348,16 +315,18 @@ class Snapshot:
 - Show surrounding code context
 
 **Hierarchy**:
-```python
+```
 GrailError (base)
 ├── ParseError          # .pym file has syntax errors
 ├── CheckError          # @external or Input() malformed
 ├── InputError          # missing/invalid input at runtime
 ├── ExternalError       # missing external function implementation
 ├── ExecutionError      # Monty runtime error
-│   └── LimitError      # resource limit exceeded
+├── LimitError          # resource limit exceeded (NOT a subclass of ExecutionError)
 └── OutputError         # output validation failed
 ```
+
+**Important**: `LimitError` inherits directly from `GrailError`, NOT from `ExecutionError`. This is intentional — resource limits are fundamentally different from code bugs.
 
 **Error Format**:
 ```
@@ -371,7 +340,7 @@ grail.ExecutionError: analysis.pym:22 — NameError: name 'undefined_var' is not
 Context: This variable is not defined in the script and is not a declared Input().
 ```
 
-### 10. CLI (`cli.py`)
+### 9. CLI (`cli.py`)
 
 **Responsibility**: Command-line interface for grail tooling
 
@@ -422,43 +391,25 @@ Context: This variable is not defined in the script and is not a declared Input(
 ```
 1. User calls script.run(inputs={...}, externals={...})
    ↓
-2. Validate inputs match Input[] declarations (type checking)
+2. Validate inputs match Input[] declarations
    ↓
 3. Validate externals match @external[] declarations
    ↓
-4. Transform limits to Monty format
+4. Transform Limits to Monty format
    ↓
 5. Transform files dict to OSAccess with MemoryFile[]
    ↓
-6. Create pydantic_monty.Monty(monty_code, type_check_stubs=stubs)
+6. Transform environ dict to virtual env vars
    ↓
-7. Call pydantic_monty.run_monty_async()
+7. Create Monty instance with monty_code and stubs
    ↓
-8. Map any errors to .pym line numbers via source_map
+8. Execute script
    ↓
-9. Write stdout/stderr to .grail/analysis/run.log
+9. Map any errors to .pym line numbers via source_map
    ↓
-10. Return result
-```
-
-### Pause/Resume Execution
-
-```
-1. User calls script.start(inputs={...}, externals={...})
+10. Write stdout/stderr to .grail/analysis/run.log
    ↓
-2. Start Monty execution, pause on first external call
-   ↓
-3. Wrap MontySnapshot in grail.Snapshot
-   ↓
-4. User reads snapshot.function_name, args, kwargs
-   ↓
-5. User calls external function, gets result
-   ↓
-6. User calls snapshot.resume(return_value=...)
-   ↓
-7. Monty continues, pauses on next external or completes
-   ↓
-8. Repeat until is_complete=True
+11. Return result (optionally validated against output_model)
 ```
 
 ## Monty Integration
@@ -467,10 +418,11 @@ Context: This variable is not defined in the script and is not a declared Input(
 
 | Grail Limit | Monty Limit | Notes |
 |---|---|---|
-| `"max_memory": "16mb"` | `max_memory: 16777216` | Parse string → bytes |
-| `"max_duration": "2s"` | `max_duration_secs: 2.0` | Parse string → seconds |
-| `"max_recursion": 200` | `max_recursion_depth: 200` | Direct pass-through |
-| `"max_allocations": None` | `max_allocations: None` | Optional |
+| `max_memory="16mb"` | `max_memory=16777216` | Parse string → bytes |
+| `max_duration="2s"` | `max_duration_secs=2.0` | Parse string → seconds |
+| `max_recursion=200` | `max_recursion_depth=200` | Direct pass-through |
+| `max_allocations=None` | `max_allocations=None` | Optional |
+| `gc_interval=5000` | `gc_interval=5000` | Optional |
 
 ### Filesystem Mapping
 
@@ -486,6 +438,17 @@ fs = OSAccess([
     MemoryFile("/data/customers.csv", content="id,name\n1,Alice\n"),
     MemoryFile("/data/tweets.json", content=b'{"user": "..."}'),
 ])
+```
+
+### Environment Variables Mapping
+
+```python
+# Grail input:
+environ = {"API_KEY": "abc123", "ENV": "production"}
+
+# Inside Monty:
+# os.getenv("API_KEY") returns "abc123"
+# os.getenv("ENV") returns "production"
 ```
 
 ### Type Checking Integration
@@ -511,6 +474,7 @@ m = pydantic_monty.Monty(
 
 ### Runtime Dependencies
 - `pydantic-monty`: Monty Python bindings (required)
+- `pydantic >= 2.12.5`: For Limits model and output validation
 - `ast`: Built-in Python module (for parsing)
 - `typing`: Built-in Python module
 
@@ -563,7 +527,7 @@ script.run(
 
 ### Custom Output Validation
 
-Grail doesn't provide `GrailModel` (deferred until Monty supports classes). Instead:
+Use the `output_model` parameter with Pydantic:
 
 ```python
 from pydantic import BaseModel
@@ -630,17 +594,15 @@ Grail adds:
 ### Integration Tests
 - `test_script.py`: Full load → check → run workflow
 - `test_artifacts.py`: Artifact generation and cleanup
-- `test_snapshot.py`: Pause/resume serialization
 - `test_cli.py`: CLI command execution
 
 ### E2E Tests
-- `test_real_workflows.py`: Example scripts (expense_analysis, sql_playground)
+- `test_real_workflows.py`: Example scripts
 - `test_monty_integration.py`: Direct Monty compatibility
 - `test_type_checking.py`: Monty's type checker integration
 
 ### Property Tests
 - Source map correctness (bidirectional mapping)
-- Round-trip serialization (dump/load snapshots)
 - Limit parsing (all valid formats)
 
 ## Future Considerations

@@ -62,7 +62,7 @@ class TestOutputModelValidation:
         pym.write_text(
             """from grail import Input
 x: int = Input("x")
-result = {"value": 42}
+{"value": 42}
 """
         )
 
@@ -83,7 +83,7 @@ result = {"value": 42}
         pym.write_text(
             """from grail import Input
 x: int = Input("x")
-result = {"wrong_field": "not_int"}
+{"wrong_field": "not_int"}
 """
         )
 
@@ -103,7 +103,7 @@ class TestVirtualFilesystem:
     async def test_run_with_files_parameter(self, tmp_path):
         """Verify files parameter is accepted by run()."""
         pym = tmp_path / "test.pym"
-        pym.write_text("x: int = 1\nresult = x + 1")
+        pym.write_text("x: int = 1\nx + 1")
 
         script = load(pym)
         result = await script.run(inputs={"x": 1}, strict_validation=False)
@@ -113,7 +113,7 @@ class TestVirtualFilesystem:
     async def test_files_override_at_runtime(self, tmp_path):
         """Verify runtime files can override load-time files."""
         pym = tmp_path / "test.pym"
-        pym.write_text("x: int = 1\nresult = x + 1")
+        pym.write_text("x: int = 1\nx + 1")
 
         script = load(pym)
         result = await script.run(
@@ -512,6 +512,7 @@ from grail import Input
 
 person: Person = Input("person")
 result = f"{person.name} is {person.age}"
+result
 """)
 
         script = load(pym, dataclass_registry=[Person])

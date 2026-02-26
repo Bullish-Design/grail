@@ -105,7 +105,7 @@ def generate_stubs(
 
         if external.docstring:
             escaped = external.docstring.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
-            lines.append(f' """{escaped}"""')
+            lines.append(f'    """{escaped}"""')
 
         lines.append("    ...")
         lines.append("")

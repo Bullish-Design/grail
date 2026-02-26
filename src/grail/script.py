@@ -367,8 +367,8 @@ class GrailScript:
         source_context = None
         if hasattr(error, "traceback") and callable(error.traceback):
             tb = error.traceback()
-            if tb and tb.frames:
-                frame = tb.frames[-1]
+            if tb:
+                frame = tb[-1]
                 monty_line = frame.line
                 lineno = self.source_map.monty_to_pym.get(monty_line)
                 # Do NOT fall back to monty_line — it's meaningless to users
@@ -695,7 +695,7 @@ async def run(
     inputs: dict[str, Any] | None = None,
     limits: Limits | None = None,
     environ: dict[str, str] | None = None,
-    print_callback: Callable[[str, str], None] | None = None,
+    print_callback: Callable[[Literal["stdout"], str], None] | None = None,
 ) -> Any:
     """Run a Monty script from source code.
 
@@ -708,7 +708,7 @@ async def run(
         limits: Resource limits (defaults to Limits.default())
         environ: Environment variables for os.getenv()
         print_callback: Optional callback for print() output from the script.
-            Signature: (stream: str, text: str) -> None
+            Signature: (stream: Literal["stdout"], text: str) -> None
 
     Returns:
         Result of code execution
@@ -722,13 +722,22 @@ async def run(
     if environ:
         os_access = pydantic_monty.OSAccess(environ=environ)
 
-    return await pydantic_monty.run_monty_async(
-        monty,
-        inputs=inputs or None,
-        limits=parsed_limits or None,
-        os=os_access,
-        print_callback=print_callback,
-    )
+    try:
+        return await pydantic_monty.run_monty_async(
+            monty,
+            inputs=inputs or None,
+            limits=parsed_limits or None,
+            os=os_access,
+            print_callback=print_callback,
+        )
+    except pydantic_monty.MontyRuntimeError as e:
+        error_msg = str(e)
+        raise ExecutionError(
+            error_msg,
+            lineno=None,
+            source_context=None,
+            suggestion=None,
+        ) from e
 
 
 def run_sync(
@@ -736,7 +745,7 @@ def run_sync(
     *,
     inputs: dict[str, Any] | None = None,
     limits: Limits | None = None,
-    print_callback: Callable[[str, str], None] | None = None,
+    print_callback: Callable[[Literal["stdout"], str], None] | None = None,
 ) -> Any:
     """Synchronous wrapper for inline Monty code execution.
 

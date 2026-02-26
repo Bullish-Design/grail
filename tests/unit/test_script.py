@@ -42,7 +42,7 @@ def test_validate_inputs_extra_input_warns():
     script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
 
     with pytest.warns(UserWarning, match="Extra input"):
-        script._validate_inputs({"x": 1, "extra": 2})
+        script._validate_inputs({"x": 1, "extra": 2}, strict=False)
 
 
 def test_validate_externals_missing():
@@ -58,7 +58,7 @@ def test_validate_externals_extra_warns():
     script = load(FIXTURES_DIR / "simple.pym", grail_dir=None)
 
     with pytest.warns(UserWarning, match="Extra external"):
-        script._validate_externals({"double": lambda x: x * 2, "extra": lambda: None})
+        script._validate_externals({"double": lambda x: x * 2, "extra": lambda: None}, strict=False)
 
 
 @pytest.mark.asyncio
