@@ -6,6 +6,12 @@ import ast
 
 from grail._types import CheckMessage, CheckResult, ParseResult
 
+ALLOWED_MODULES: set[str] = {
+    "grail",
+    "typing",
+    "__future__",
+}
+
 
 class MontyCompatibilityChecker(ast.NodeVisitor):
     """AST visitor that detects Monty-incompatible Python features.
@@ -105,9 +111,10 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Import(self, node: ast.Import) -> None:
-        """Detect import statements (only grail and typing allowed)."""
+        """Detect import statements (only grail, typing, __future__ allowed)."""
         for alias in node.names:
-            if alias.name != "typing":
+            root_module = alias.name.split(".")[0]
+            if root_module not in ALLOWED_MODULES:
                 self.errors.append(
                     CheckMessage(
                         code="E005",
@@ -118,7 +125,8 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
                         severity="error",
                         message=f"Import '{alias.name}' is not allowed in Monty",
                         suggestion=(
-                            "Only 'from grail import ...' and 'from typing import ...' are allowed"
+                            "Only 'from grail import ...', 'from typing import ...', "
+                            "and 'from __future__ import ...' are allowed"
                         ),
                     )
                 )
@@ -126,8 +134,8 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Detect from...import statements."""
-        if node.module not in {"grail", "typing"}:
-            module_name = node.module or "<relative>"
+        if node.module is not None and node.module not in ALLOWED_MODULES:
+            module_name = node.module
             self.errors.append(
                 CheckMessage(
                     code="E005",
@@ -138,7 +146,8 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
                     severity="error",
                     message=f"Import from '{module_name}' is not allowed in Monty",
                     suggestion=(
-                        "Only 'from grail import ...' and 'from typing import ...' are allowed"
+                        "Only 'from grail import ...', 'from typing import ...', "
+                        "and 'from __future__ import ...' are allowed"
                     ),
                 )
             )
@@ -177,6 +186,38 @@ class MontyCompatibilityChecker(ast.NodeVisitor):
     def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
         """Track f-string usage."""
         self.features_used.add("f_string")
+        self.generic_visit(node)
+
+    def visit_Nonlocal(self, node: ast.Nonlocal) -> None:
+        """Detect nonlocal statements (not supported in Monty)."""
+        self.errors.append(
+            CheckMessage(
+                code="E010",
+                lineno=node.lineno,
+                col_offset=node.col_offset,
+                end_lineno=node.end_lineno,
+                end_col_offset=node.end_col_offset,
+                severity="error",
+                message="'nonlocal' statements are not supported in Monty",
+                suggestion="Avoid using nonlocal - restructure your code to use function parameters and return values",
+            )
+        )
+        self.generic_visit(node)
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        """Detect del statements (not supported in Monty)."""
+        self.errors.append(
+            CheckMessage(
+                code="E011",
+                lineno=node.lineno,
+                col_offset=node.col_offset,
+                end_lineno=node.end_lineno,
+                end_col_offset=node.end_col_offset,
+                severity="error",
+                message="'del' statements are not supported in Monty",
+                suggestion="Avoid using del - restructure your code to not need variable deletion",
+            )
+        )
         self.generic_visit(node)
 
 

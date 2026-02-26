@@ -4,7 +4,7 @@ import asyncio
 import functools
 import warnings
 from pathlib import Path
-from typing import Any, Callable, NoReturn
+from typing import Any, Callable, Literal, NoReturn
 import time
 import re
 
@@ -60,6 +60,7 @@ class GrailScript:
         source_lines: list[str],
         limits: Limits | None = None,
         files: dict[str, str | bytes] | None = None,
+        environ: dict[str, str] | None = None,
         grail_dir: Path | None = None,
         dataclass_registry: list[type] | None = None,
     ):
@@ -76,6 +77,7 @@ class GrailScript:
             source_lines: .pym source lines
             limits: Resource limits
             files: Virtual filesystem files
+            environ: Environment variables for os.getenv()
             grail_dir: Directory for artifacts (None disables)
             dataclass_registry: List of dataclass types for isinstance() checks
         """
@@ -89,6 +91,7 @@ class GrailScript:
         self.source_lines = source_lines
         self.limits = limits
         self.files = files
+        self.environ = environ
         self.grail_dir = grail_dir
         self.dataclass_registry = dataclass_registry
         self._parse_result: ParseResult | None = None  # Set by load() for check() reuse
@@ -167,15 +170,16 @@ class GrailScript:
 
         return check_result
 
-    def _validate_inputs(self, inputs: dict[str, Any]) -> None:
+    def _validate_inputs(self, inputs: dict[str, Any], strict: bool = True) -> None:
         """
-        Validate that provided inputs match declarations.
+        Validate provided inputs against declarations.
 
         Args:
             inputs: Runtime input values
+            strict: If True, raise errors for undeclared inputs. If False, warn.
 
         Raises:
-            InputError: If validation fails
+            InputError: Missing required inputs or (in strict mode) extra inputs
         """
         # Check for missing required inputs
         for name, spec in self.inputs.items():
@@ -185,36 +189,49 @@ class GrailScript:
                     input_name=name,
                 )
 
-        # Check for extra inputs (warn but don't fail)
+        # Check for extra inputs
         for name in inputs:
             if name not in self.inputs:
-                warnings.warn(
-                    f"Extra input '{name}' not declared in script",
-                    stacklevel=2,
-                )
+                if strict:
+                    raise InputError(
+                        f"Extra input '{name}' not declared in script",
+                        input_name=name,
+                    )
+                else:
+                    warnings.warn(
+                        f"Extra input '{name}' not declared in script",
+                        stacklevel=2,
+                    )
 
-    def _validate_externals(self, externals: dict[str, Callable]) -> None:
+    def _validate_externals(self, externals: dict[str, Callable], strict: bool = True) -> None:
         """
         Validate that provided externals match declarations.
 
         Args:
             externals: Runtime external function implementations
+            strict: If True, raise errors for undeclared externals. If False, warn.
 
         Raises:
-            ExternalError: If validation fails
+            ExternalError: Missing externals or (in strict mode) extra externals
         """
         # Check for missing externals
         for name in self.externals:
             if name not in externals:
                 raise ExternalError(f"Missing external function: '{name}'", function_name=name)
 
-        # Check for extra externals (warn but don't fail)
+        # Check for extra externals
         for name in externals:
             if name not in self.externals:
-                warnings.warn(
-                    f"Extra external '{name}' not declared in script",
-                    stacklevel=2,
-                )
+                if strict:
+                    raise ExternalError(
+                        f"Extra external '{name}' not declared in script",
+                        function_name=name,
+                    )
+                else:
+                    warnings.warn(
+                        f"Extra external '{name}' not declared in script",
+                        stacklevel=2,
+                    )
 
     def _prepare_monty_limits(self, override_limits: Limits | None) -> dict[str, Any]:
         """
@@ -231,25 +248,36 @@ class GrailScript:
             return base.to_monty()
         return base.merge(override_limits).to_monty()
 
-    def _prepare_monty_files(self, override_files: dict[str, str | bytes] | None):
-        """Prepare files for Monty's OSAccess.
+    def _prepare_monty_os_access(
+        self,
+        override_files: dict[str, str | bytes] | None,
+        override_environ: dict[str, str] | None,
+    ):
+        """Prepare OSAccess for Monty with files and environment variables.
 
         Args:
             override_files: Runtime file overrides
+            override_environ: Runtime environment variable overrides
 
         Returns:
             OSAccess object or None
         """
         files = override_files if override_files is not None else self.files
-        if not files:
+        environ = override_environ if override_environ is not None else self.environ
+
+        if not files and not environ:
             return None
 
-        # Convert dict to Monty's MemoryFile + OSAccess
-        memory_files = []
-        for path, content in files.items():
-            memory_files.append(pydantic_monty.MemoryFile(path, content))
+        memory_files = None
+        if files:
+            memory_files = []
+            for path, content in files.items():
+                memory_files.append(pydantic_monty.MemoryFile(path, content))
 
-        return pydantic_monty.OSAccess(memory_files)
+        return pydantic_monty.OSAccess(
+            files=memory_files,
+            environ=environ,
+        )
 
     def _handle_run_error(
         self,
@@ -300,7 +328,16 @@ class GrailScript:
         Returns:
             GrailError (ExecutionError, LimitError, or ParseError) with mapped line numbers
         """
+        # Preserve original exception type from MontyError.exception() if available
+        original_exception_type = None
+        if hasattr(error, "exception") and callable(error.exception):
+            original = error.exception()
+            if original is not None:
+                original_exception_type = type(original).__name__
+
         error_msg = str(error)
+        if original_exception_type:
+            error_msg = f"{original_exception_type}: {error_msg}"
 
         # 1. Check exception type first (most reliable)
         if hasattr(error, "limit_type"):
@@ -310,6 +347,7 @@ class GrailScript:
         # 2. Extract line number from structured traceback if available
         lineno = None
         col_offset = None
+        source_context = None
         if hasattr(error, "traceback") and callable(error.traceback):
             tb = error.traceback()
             if tb and tb.frames:
@@ -317,6 +355,10 @@ class GrailScript:
                 monty_line = frame.line
                 lineno = self.source_map.monty_to_pym.get(monty_line)
                 # Do NOT fall back to monty_line — it's meaningless to users
+
+                # Use Frame source_line for context
+                if hasattr(frame, "source_line") and frame.source_line:
+                    source_context = frame.source_line
 
         # 3. Regex fallback — only for well-structured patterns
         if lineno is None:
@@ -346,7 +388,8 @@ class GrailScript:
             return ParseError(error_msg, lineno=lineno)
 
         # 6. Default to ExecutionError
-        source_context = "\n".join(self.source_lines) if self.source_lines else None
+        if source_context is None:
+            source_context = "\n".join(self.source_lines) if self.source_lines else None
         return ExecutionError(
             error_msg,
             lineno=lineno,
@@ -361,9 +404,11 @@ class GrailScript:
         externals: dict[str, Callable] | None = None,
         output_model: type[BaseModel] | None = None,
         files: dict[str, str | bytes] | None = None,
+        environ: dict[str, str] | None = None,
         limits: Limits | None = None,
-        print_callback: Callable[[str, str], None] | None = None,
+        print_callback: Callable[[Literal["stdout"], str], None] | None = None,
         on_event: Callable[[ScriptEvent], None] | None = None,
+        strict_validation: bool = True,
     ) -> Any:
         """
         Execute the script in Monty.
@@ -373,10 +418,13 @@ class GrailScript:
             externals: External function implementations
             output_model: Optional Pydantic model for output validation
             files: Override files from load()
+            environ: Override environment variables from load()
             limits: Override limits from load()
             print_callback: Optional callback for print() output from the script.
-                Signature: (stream: str, text: str) -> None
+                Signature: (stream: Literal["stdout"], text: str) -> None
             on_event: Optional callback for structured lifecycle events.
+            strict_validation: If True (default), raise errors for undeclared
+                inputs or externals. If False, only warn.
 
         Returns:
             Result of script execution
@@ -419,12 +467,12 @@ class GrailScript:
             )
 
         # Validate inputs and externals
-        self._validate_inputs(inputs)
-        self._validate_externals(externals)
+        self._validate_inputs(inputs, strict=strict_validation)
+        self._validate_externals(externals, strict=strict_validation)
 
         # Prepare Monty configuration
         parsed_limits = self._prepare_monty_limits(limits)
-        os_access = self._prepare_monty_files(files)
+        os_access = self._prepare_monty_os_access(files, environ)
 
         # Create Monty instance - catch type errors during construction
         try:
@@ -533,6 +581,7 @@ def load(
     path: str | Path,
     limits: Limits | None = None,
     files: dict[str, str | bytes] | None = None,
+    environ: dict[str, str] | None = None,
     grail_dir: str | Path | None = ARTIFACTS_DIR_NAME,
     dataclass_registry: list[type] | None = None,
 ) -> GrailScript:
@@ -543,6 +592,7 @@ def load(
         path: Path to .pym file
         limits: Resource limits
         files: Virtual filesystem files
+        environ: Environment variables for os.getenv()
         grail_dir: Directory for artifacts (None disables)
         dataclass_registry: List of dataclass types for isinstance() checks
 
@@ -597,6 +647,7 @@ def load(
         source_lines=parse_result.source_lines,
         limits=limits,
         files=files,
+        environ=environ,
         grail_dir=grail_dir_path,
         dataclass_registry=dataclass_registry,
     )
@@ -609,6 +660,7 @@ async def run(
     *,
     inputs: dict[str, Any] | None = None,
     limits: Limits | None = None,
+    environ: dict[str, str] | None = None,
     print_callback: Callable[[str, str], None] | None = None,
 ) -> Any:
     """Run a Monty script from source code.
@@ -620,6 +672,7 @@ async def run(
         code: Monty code to execute
         inputs: Input values
         limits: Resource limits (defaults to Limits.default())
+        environ: Environment variables for os.getenv()
         print_callback: Optional callback for print() output from the script.
             Signature: (stream: str, text: str) -> None
 
@@ -631,10 +684,15 @@ async def run(
 
     parsed_limits = (limits or Limits.default()).to_monty()
 
+    os_access = None
+    if environ:
+        os_access = pydantic_monty.OSAccess(environ=environ)
+
     return await pydantic_monty.run_monty_async(
         monty,
         inputs=inputs or None,
         limits=parsed_limits or None,
+        os=os_access,
         print_callback=print_callback,
     )
 
