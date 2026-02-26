@@ -7,19 +7,33 @@ from typing import Any, Callable
 import time
 import re
 
-try:
-    import pydantic_monty
-except ImportError:
-    pydantic_monty = None
+import pydantic_monty
 
-from grail._types import ExternalSpec, InputSpec, CheckResult, CheckMessage, SourceMap, ScriptEvent
+from grail._types import (
+    ExternalSpec,
+    InputSpec,
+    CheckResult,
+    CheckMessage,
+    SourceMap,
+    ScriptEvent,
+    ParseResult,
+)
 from grail.parser import parse_pym_file
 from grail.checker import check_pym
 from grail.stubs import generate_stubs
 from grail.codegen import generate_monty_code
 from grail.artifacts import ArtifactsManager
 from grail.limits import Limits
-from grail.errors import InputError, ExternalError, ExecutionError, LimitError, OutputError
+from grail.errors import (
+    GrailError,
+    InputError,
+    ExternalError,
+    ExecutionError,
+    LimitError,
+    OutputError,
+    ParseError,
+)
+from pydantic import BaseModel
 
 
 class GrailScript:
@@ -75,6 +89,7 @@ class GrailScript:
         self.files = files
         self.grail_dir = grail_dir
         self.dataclass_registry = dataclass_registry
+        self._parse_result: ParseResult | None = None  # Set by load() for check() reuse
 
         # Initialize artifacts manager if grail_dir is set
         self._artifacts = ArtifactsManager(grail_dir) if grail_dir else None
@@ -98,36 +113,39 @@ class GrailScript:
                 )
             )
 
-        # Re-parse and check
-        parse_result = parse_pym_file(self.path)
+        # Use cached parse result for consistency with load-time
+        # This avoids TOCTOU issues if file changed on disk
+        parse_result = self._parse_result
+        if parse_result is None:
+            parse_result = parse_pym_file(self.path)
+
         check_result = check_pym(parse_result)
         check_result.file = str(self.path)
 
-        # Run Monty type checker if available
-        if pydantic_monty is not None:
-            try:
-                pydantic_monty.Monty(
-                    self.monty_code,
-                    script_name=f"{self.name}.pym",
-                    type_check=True,
-                    type_check_stubs=self.stubs,
-                    inputs=list(self.inputs.keys()),
-                    external_functions=list(self.externals.keys()),
+        # Run Monty type checker
+        try:
+            pydantic_monty.Monty(
+                self.monty_code,
+                script_name=f"{self.name}.pym",
+                type_check=True,
+                type_check_stubs=self.stubs,
+                inputs=list(self.inputs.keys()),
+                external_functions=list(self.externals.keys()),
+            )
+        except pydantic_monty.MontyTypingError as e:
+            check_result.errors.append(
+                CheckMessage(
+                    code="E100",
+                    lineno=0,
+                    col_offset=0,
+                    end_lineno=None,
+                    end_col_offset=None,
+                    severity="error",
+                    message=f"Type error: {str(e)}",
+                    suggestion="Fix the type error indicated above",
                 )
-            except pydantic_monty.MontyTypingError as e:
-                check_result.errors.append(
-                    CheckMessage(
-                        code="E100",
-                        lineno=0,
-                        col_offset=0,
-                        end_lineno=None,
-                        end_col_offset=None,
-                        severity="error",
-                        message=f"Type error: {str(e)}",
-                        suggestion="Fix the type error indicated above",
-                    )
-                )
-                check_result.valid = False
+            )
+            check_result.valid = False
 
         # Write check results to artifacts if enabled
         if self._artifacts:
@@ -212,8 +230,7 @@ class GrailScript:
         return base.merge(override_limits).to_monty()
 
     def _prepare_monty_files(self, override_files: dict[str, str | bytes] | None):
-        """
-        Prepare files for Monty's OSAccess.
+        """Prepare files for Monty's OSAccess.
 
         Args:
             override_files: Runtime file overrides
@@ -221,9 +238,6 @@ class GrailScript:
         Returns:
             OSAccess object or None
         """
-        if pydantic_monty is None:
-            return None
-
         files = override_files if override_files is not None else self.files
         if not files:
             return None
@@ -235,7 +249,7 @@ class GrailScript:
 
         return pydantic_monty.OSAccess(memory_files)
 
-    def _map_error_to_pym(self, error: Exception) -> ExecutionError:
+    def _map_error_to_pym(self, error: Exception) -> GrailError:
         """
         Map Monty error to .pym file line numbers.
 
@@ -246,41 +260,54 @@ class GrailScript:
             error: Original error from Monty
 
         Returns:
-            ExecutionError with mapped line numbers
+            GrailError (ExecutionError, LimitError, or ParseError) with mapped line numbers
         """
         error_msg = str(error)
-        error_msg_lower = error_msg.lower()
+
+        # 1. Check exception type first (most reliable)
+        if hasattr(error, "limit_type"):
+            # Monty limit errors should carry structured data
+            return LimitError(error_msg, limit_type=error.limit_type)
+
+        # 2. Extract line number from structured traceback if available
         lineno = None
         col_offset = None
-
-        # Use structured traceback if available (MontyRuntimeError)
-        if pydantic_monty is not None and isinstance(error, pydantic_monty.MontyRuntimeError):
-            frames = error.traceback()
-            if frames:
-                # Use the innermost frame (last in the list)
-                frame = frames[-1]
+        if hasattr(error, "traceback") and callable(error.traceback):
+            tb = error.traceback()
+            if tb and tb.frames:
+                frame = tb.frames[-1]
                 monty_line = frame.line
-                lineno = self.source_map.monty_to_pym.get(monty_line, monty_line)
-                col_offset = getattr(frame, "column", None)
-        else:
-            # Fallback: try to extract line number from error message
-            match = re.search(r"line (\d+)", error_msg, re.IGNORECASE)
+                lineno = self.source_map.monty_to_pym.get(monty_line)
+                # Do NOT fall back to monty_line — it's meaningless to users
+
+        # 3. Regex fallback — only for well-structured patterns
+        if lineno is None:
+            match = re.search(r"(?:^|,\s*)line\s+(\d+)(?:\s*,|\s*$)", error_msg)
             if match:
-                monty_line = int(match.group(1))
-                lineno = self.source_map.monty_to_pym.get(monty_line, monty_line)
+                raw_line = int(match.group(1))
+                lineno = self.source_map.monty_to_pym.get(raw_line)
+                # Still don't fall back — None is better than a wrong number
 
-        # Detect limit errors by type or message heuristics
-        limit_type = None
-        if "memory" in error_msg_lower:
-            limit_type = "memory"
-        elif "duration" in error_msg_lower:
-            limit_type = "duration"
-        elif "recursion" in error_msg_lower:
-            limit_type = "recursion"
+        # 4. Limit detection — require exception type OR "limit" + keyword
+        error_msg_lower = error_msg.lower()
+        if "limit" in error_msg_lower or "exceeded" in error_msg_lower:
+            limit_type = None
+            if "memory" in error_msg_lower:
+                limit_type = "memory"
+            elif "duration" in error_msg_lower or "timeout" in error_msg_lower:
+                limit_type = "duration"
+            elif "recursion" in error_msg_lower:
+                limit_type = "recursion"
+            elif "allocation" in error_msg_lower:
+                limit_type = "allocations"
+            if limit_type:
+                return LimitError(error_msg, limit_type=limit_type)
 
-        if "limit" in error_msg_lower or limit_type is not None:
-            return LimitError(error_msg, limit_type=limit_type)
+        # 5. Map MontySyntaxError to ParseError
+        if type(error).__name__ == "MontySyntaxError":
+            return ParseError(error_msg, lineno=lineno)
 
+        # 6. Default to ExecutionError
         source_context = "\n".join(self.source_lines) if self.source_lines else None
         return ExecutionError(
             error_msg,
@@ -294,7 +321,7 @@ class GrailScript:
         self,
         inputs: dict[str, Any] | None = None,
         externals: dict[str, Callable] | None = None,
-        output_model: type | None = None,
+        output_model: type[BaseModel] | None = None,
         files: dict[str, str | bytes] | None = None,
         limits: Limits | None = None,
         print_callback: Callable[[str, str], None] | None = None,
@@ -322,8 +349,6 @@ class GrailScript:
             ExecutionError: Monty runtime error
             OutputError: Output validation failed
         """
-        if pydantic_monty is None:
-            raise RuntimeError("pydantic-monty not installed")
 
         inputs = inputs or {}
         externals = externals or {}
@@ -485,9 +510,12 @@ class GrailScript:
         # Validate output if model provided
         if output_model is not None:
             try:
-                result = output_model.model_validate(result)
+                if isinstance(result, dict):
+                    result = output_model.model_validate(result)
+                else:
+                    result = output_model.model_validate(result, from_attributes=True)
             except Exception as e:
-                raise OutputError(f"Output validation failed: {e}", validation_errors=e)
+                raise OutputError(f"Output validation failed: {e}", validation_errors=e) from e
 
         return result
 
@@ -548,6 +576,8 @@ def load(
         ParseError: If file has syntax errors
         CheckError: If declarations are malformed
     """
+    from grail.errors import CheckError
+
     path = Path(path)
 
     # Parse the file
@@ -556,6 +586,12 @@ def load(
     # Run validation checks
     check_result = check_pym(parse_result)
     check_result.file = str(path)
+
+    # Raise if there are errors
+    errors = [msg for msg in check_result.messages if msg.code.startswith("E")]
+    if errors:
+        error_summary = "; ".join(f"{m.code}: {m.message} (line {m.lineno})" for m in errors)
+        raise CheckError(f"Script validation failed with {len(errors)} error(s): {error_summary}")
 
     # Generate stubs
     stubs = generate_stubs(parse_result.externals, parse_result.inputs)
@@ -573,7 +609,7 @@ def load(
             path.stem, stubs, monty_code, check_result, parse_result.externals, parse_result.inputs
         )
 
-    return GrailScript(
+    script = GrailScript(
         path=path,
         externals=parse_result.externals,
         inputs=parse_result.inputs,
@@ -586,6 +622,8 @@ def load(
         grail_dir=grail_dir_path,
         dataclass_registry=dataclass_registry,
     )
+    script._parse_result = parse_result  # Cache for check() reuse
+    return script
 
 
 async def run(
@@ -600,13 +638,11 @@ async def run(
         code: Monty code to execute
         inputs: Input values
         print_callback: Optional callback for print() output from the script.
-            Signature: (stream: str, text: str) -> None
+        Signature: (stream: str, text: str) -> None
 
     Returns:
         Result of code execution
     """
-    if pydantic_monty is None:
-        raise RuntimeError("pydantic-monty not installed")
 
     input_names: list[str] = []
     input_values: dict[str, Any] = {}

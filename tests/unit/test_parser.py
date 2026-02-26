@@ -155,7 +155,7 @@ def process(x: int, y: int = 10) -> int:
     assert func.parameters[0].name == "x"
     assert func.parameters[0].default is None
     assert func.parameters[1].name == "y"
-    assert func.parameters[1].default == 10
+    assert func.parameters[1].default == "Constant(value=10)"
 
 
 def test_nested_external_not_extracted() -> None:

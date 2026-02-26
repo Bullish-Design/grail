@@ -24,6 +24,17 @@ class GrailDeclarationStripper(ast.NodeTransformer):
         self.externals = externals  # Set of external function names
         self.inputs = inputs  # Set of input variable names
 
+    def _is_input_call(self, node: ast.expr | None) -> bool:
+        """Check if an expression is an Input() or grail.Input() call."""
+        if not isinstance(node, ast.Call):
+            return False
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "Input":
+            return True
+        if isinstance(func, ast.Attribute) and func.attr == "Input":
+            return True
+        return False
+
     def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.ImportFrom | None:
         """Remove 'from grail import ...' statements.
 
@@ -46,26 +57,20 @@ class GrailDeclarationStripper(ast.NodeTransformer):
             return None
         return node
 
-    def visit_Assign(self, node: ast.Assign) -> ast.Assign | None:
+    def visit_Assign(self, node: ast.Assign) -> ast.AST | None:
         """Strip Input() assignments without annotations."""
-        if isinstance(node.value, ast.Call):
-            func = node.value.func
-            is_input_call = False
-            if isinstance(func, ast.Name) and func.id == "Input":
-                is_input_call = True
-            elif isinstance(func, ast.Attribute) and func.attr == "Input":
-                is_input_call = True
-            if is_input_call:
-                for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id in self.inputs:
-                        return None
-        return node
+        if self._is_input_call(node.value):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in self.inputs:
+                    return None  # Remove this node entirely
+        return self.generic_visit(node)
 
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AnnAssign | None:
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST | None:
         """Remove Input() assignment statements."""
         if isinstance(node.target, ast.Name) and node.target.id in self.inputs:
-            return None
-        return node
+            if self._is_input_call(node.value):
+                return None  # Remove this node entirely
+        return self.generic_visit(node)
 
 
 def build_source_map(transformed_ast: ast.Module, generated_code: str) -> SourceMap:

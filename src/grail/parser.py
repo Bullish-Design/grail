@@ -31,10 +31,20 @@ def get_type_annotation_str(node: ast.expr | None, lenient: bool = False) -> str
     return ast.unparse(node)
 
 
+def _get_annotation(node: ast.expr | None) -> str:
+    """Convert AST annotation node to string."""
+    if node is None:
+        return "<missing>"
+    return ast.unparse(node)
+
+
 def extract_function_params(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> list[ParamSpec]:
     """Extract parameter specifications from function definition.
+
+    Handles all parameter kinds: positional-only, positional-or-keyword,
+    var-positional (*args), keyword-only, and var-keyword (**kwargs).
 
     Args:
         func_node: Function definition AST node.
@@ -42,32 +52,89 @@ def extract_function_params(
     Returns:
         List of parameter specifications.
     """
+    from grail._types import ParamKind
+
     params: list[ParamSpec] = []
-    args = func_node.args.args
+    args = func_node.args
 
-    for index, arg in enumerate(args):
-        if arg.arg == "self":
-            continue
+    # Defaults are right-aligned: if there are 3 args and 1 default,
+    # the default applies to the 3rd arg.
+    num_posonly = len(args.posonlyargs)
+    num_regular = len(args.args)
+    num_pos_defaults = len(args.defaults)
+    # defaults apply to the LAST N of (posonlyargs + args)
+    total_positional = num_posonly + num_regular
+    first_default_idx = total_positional - num_pos_defaults
 
-        annotation_str = get_type_annotation_str(arg.annotation, lenient=True)
-
-        default = None
-        num_defaults = len(func_node.args.defaults)
-        num_args = len(args)
-
-        if index >= num_args - num_defaults:
-            default_index = index - (num_args - num_defaults)
-            default_node = func_node.args.defaults[default_index]
-            try:
-                default = ast.literal_eval(default_node)
-            except (ValueError, TypeError):
-                default = ast.unparse(default_node)
-
+    # Positional-only arguments
+    for i, arg in enumerate(args.posonlyargs):
+        global_idx = i
+        has_default = global_idx >= first_default_idx
+        default_val = None
+        if has_default:
+            default_val = ast.dump(args.defaults[global_idx - first_default_idx])
         params.append(
             ParamSpec(
                 name=arg.arg,
-                type_annotation=annotation_str,
-                default=default,
+                type_annotation=_get_annotation(arg.annotation),
+                has_default=has_default,
+                default=default_val,
+                kind=ParamKind.POSITIONAL_ONLY,
+            )
+        )
+
+    # Regular positional-or-keyword arguments
+    for i, arg in enumerate(args.args):
+        if arg.arg == "self":
+            continue
+
+        global_idx = num_posonly + i
+        has_default = global_idx >= first_default_idx
+        default_val = None
+        if has_default:
+            default_val = ast.dump(args.defaults[global_idx - first_default_idx])
+        params.append(
+            ParamSpec(
+                name=arg.arg,
+                type_annotation=_get_annotation(arg.annotation),
+                has_default=has_default,
+                default=default_val,
+                kind=ParamKind.POSITIONAL_OR_KEYWORD,
+            )
+        )
+
+    # *args
+    if args.vararg:
+        params.append(
+            ParamSpec(
+                name=args.vararg.arg,
+                type_annotation=_get_annotation(args.vararg.annotation),
+                has_default=False,
+                kind=ParamKind.VAR_POSITIONAL,
+            )
+        )
+
+    # Keyword-only arguments (kw_defaults aligns 1:1 with kwonlyargs)
+    for i, arg in enumerate(args.kwonlyargs):
+        kw_default = args.kw_defaults[i]  # None if no default
+        params.append(
+            ParamSpec(
+                name=arg.arg,
+                type_annotation=_get_annotation(arg.annotation),
+                has_default=kw_default is not None,
+                default=ast.dump(kw_default) if kw_default is not None else None,
+                kind=ParamKind.KEYWORD_ONLY,
+            )
+        )
+
+    # **kwargs
+    if args.kwarg:
+        params.append(
+            ParamSpec(
+                name=args.kwarg.arg,
+                type_annotation=_get_annotation(args.kwarg.annotation),
+                has_default=False,
+                kind=ParamKind.VAR_KEYWORD,
             )
         )
 

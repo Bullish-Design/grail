@@ -127,6 +127,7 @@ def test_load_creates_artifacts(tmp_path):
 def test_map_error_to_pym_uses_source_map():
     """_map_error_to_pym should translate Monty line numbers to .pym line numbers."""
     from grail._types import SourceMap
+    from grail.errors import ExecutionError
 
     source_map = SourceMap()
     source_map.add_mapping(pym_line=10, monty_line=3)
@@ -144,7 +145,8 @@ def test_map_error_to_pym_uses_source_map():
         grail_dir=None,
     )
 
-    error = RuntimeError("Monty failed at line 3")
+    error = RuntimeError("line 3, something")
     mapped = script._map_error_to_pym(error)
 
+    assert isinstance(mapped, ExecutionError)
     assert mapped.lineno == 10

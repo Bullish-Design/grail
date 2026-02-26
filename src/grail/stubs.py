@@ -4,7 +4,7 @@ import re
 
 from grail._types import ExternalSpec, InputSpec
 
-_TYPING_NAMES = {
+_TYPING_NAMES: set[str] = {
     "Any",
     "Optional",
     "Union",
@@ -30,10 +30,12 @@ _TYPING_NAMES = {
     "Required",
     "ClassVar",
     "Generic",
-    "Protocol",
     "ParamSpec",
     "Concatenate",
     "TypeAlias",
+    "TypeGuard",
+    "Never",
+    "Self",
 }
 
 
@@ -98,8 +100,8 @@ def generate_stubs(
             lines.append(f"def {external.name}({params_str}) -> {external.return_type}:")
 
         if external.docstring:
-            safe_docstring = external.docstring.replace('"""', '\\"\\"\\"')
-            lines.append(f'    """{safe_docstring}"""')
+            escaped = external.docstring.replace("\\", "\\\\").replace('"""', '\\"\\"\\"')
+            lines.append(f' """{escaped}"""')
 
         lines.append("    ...")
         lines.append("")

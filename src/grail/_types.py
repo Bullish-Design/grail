@@ -4,7 +4,18 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Literal
+
+
+class ParamKind(str, Enum):
+    """Parameter kind enumeration."""
+
+    POSITIONAL_ONLY = "positional-only"
+    POSITIONAL_OR_KEYWORD = "positional-or-keyword"
+    VAR_POSITIONAL = "var-positional"  # *args
+    KEYWORD_ONLY = "keyword-only"
+    VAR_KEYWORD = "var-keyword"  # **kwargs
 
 
 @dataclass
@@ -14,6 +25,8 @@ class ParamSpec:
     name: str
     type_annotation: str
     default: Any | None = None
+    has_default: bool = False
+    kind: ParamKind = ParamKind.POSITIONAL_OR_KEYWORD
 
 
 @dataclass
@@ -91,6 +104,11 @@ class CheckResult:
     errors: list[CheckMessage]
     warnings: list[CheckMessage]
     info: dict[str, Any]
+
+    @property
+    def messages(self) -> list[CheckMessage]:
+        """Combined list of all errors and warnings."""
+        return self.errors + self.warnings
 
 
 @dataclass
