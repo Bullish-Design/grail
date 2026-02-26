@@ -22,5 +22,4 @@ def external(func: F) -> F:
     - Function must have complete type annotations
     - Function body must be ... (Ellipsis)
     """
-    setattr(func, "__grail_external__", True)
     return func

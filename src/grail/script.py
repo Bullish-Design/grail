@@ -1,9 +1,10 @@
 """GrailScript - Main API for loading and executing .pym files."""
 
 import asyncio
+import functools
 import warnings
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, NoReturn
 import time
 import re
 
@@ -24,6 +25,7 @@ from grail.stubs import generate_stubs
 from grail.codegen import generate_monty_code
 from grail.artifacts import ArtifactsManager
 from grail.limits import Limits
+from grail.artifacts import ARTIFACTS_DIR_NAME
 from grail.errors import (
     GrailError,
     InputError,
@@ -249,6 +251,42 @@ class GrailScript:
 
         return pydantic_monty.OSAccess(memory_files)
 
+    def _handle_run_error(
+        self,
+        error: Exception,
+        start_time: float,
+        captured_output: list[str],
+    ) -> NoReturn:
+        """Map a runtime error, fire events, write logs, and re-raise."""
+        duration_ms = (time.time() - start_time) * 1000
+        mapped_error = self._map_error_to_pym(error)
+
+        # Fire event
+        on_event = getattr(self, "_current_on_event", None)
+        if on_event is not None:
+            on_event(
+                ScriptEvent(
+                    type="run_error",
+                    script_name=self.name,
+                    timestamp=time.time(),
+                    duration_ms=duration_ms,
+                    error=str(mapped_error),
+                )
+            )
+
+        # Write error log
+        if self._artifacts:
+            stdout_text = "".join(captured_output)
+            self._artifacts.write_run_log(
+                self.name,
+                stdout=stdout_text,
+                stderr=str(mapped_error),
+                duration_ms=duration_ms,
+                success=False,
+            )
+
+        raise mapped_error from error
+
     def _map_error_to_pym(self, error: Exception) -> GrailError:
         """
         Map Monty error to .pym file line numbers.
@@ -410,6 +448,7 @@ class GrailScript:
 
         # Execute
         start_time = time.time()
+        self._current_on_event = on_event
         try:
             result = await pydantic_monty.run_monty_async(
                 monty,
@@ -419,69 +458,8 @@ class GrailScript:
                 limits=parsed_limits,
                 print_callback=_monty_print_callback,
             )
-            success = True
-            error_msg = None
-        except (pydantic_monty.MontyRuntimeError, pydantic_monty.MontyTypingError) as e:
-            success = False
-            error_msg = str(e)
-            mapped_error = self._map_error_to_pym(e)
-
-            if on_event is not None:
-                duration_ms = (time.time() - start_time) * 1000
-                on_event(
-                    ScriptEvent(
-                        type="run_error",
-                        script_name=self.name,
-                        timestamp=time.time(),
-                        duration_ms=duration_ms,
-                        error=str(mapped_error),
-                    )
-                )
-
-            # Write error log
-            if self._artifacts:
-                duration_ms = (time.time() - start_time) * 1000
-                stdout_text = "".join(captured_output)
-                self._artifacts.write_run_log(
-                    self.name,
-                    stdout=stdout_text,
-                    stderr=str(mapped_error),
-                    duration_ms=duration_ms,
-                    success=False,
-                )
-
-            raise mapped_error
         except Exception as e:
-            # Catch unexpected errors (MontySyntaxError, etc.)
-            success = False
-            error_msg = str(e)
-            mapped_error = self._map_error_to_pym(e)
-
-            if on_event is not None:
-                duration_ms = (time.time() - start_time) * 1000
-                on_event(
-                    ScriptEvent(
-                        type="run_error",
-                        script_name=self.name,
-                        timestamp=time.time(),
-                        duration_ms=duration_ms,
-                        error=str(mapped_error),
-                    )
-                )
-
-            # Write error log
-            if self._artifacts:
-                duration_ms = (time.time() - start_time) * 1000
-                stdout_text = "".join(captured_output)
-                self._artifacts.write_run_log(
-                    self.name,
-                    stdout=stdout_text,
-                    stderr=str(mapped_error),
-                    duration_ms=duration_ms,
-                    success=False,
-                )
-
-            raise mapped_error
+            self._handle_run_error(e, start_time, captured_output)
 
         duration_ms = (time.time() - start_time) * 1000
         stdout_text = "".join(captured_output)
@@ -555,7 +533,7 @@ def load(
     path: str | Path,
     limits: Limits | None = None,
     files: dict[str, str | bytes] | None = None,
-    grail_dir: str | Path | None = ".grail",
+    grail_dir: str | Path | None = ARTIFACTS_DIR_NAME,
     dataclass_registry: list[type] | None = None,
 ) -> GrailScript:
     """
@@ -628,55 +606,52 @@ def load(
 
 async def run(
     code: str,
+    *,
     inputs: dict[str, Any] | None = None,
+    limits: Limits | None = None,
     print_callback: Callable[[str, str], None] | None = None,
 ) -> Any:
-    """
-    Execute inline Monty code (escape hatch for simple cases).
+    """Run a Monty script from source code.
+
+    This is a simple escape hatch for quick execution. For production use,
+    prefer grail.load() which provides full validation and error mapping.
 
     Args:
         code: Monty code to execute
         inputs: Input values
+        limits: Resource limits (defaults to Limits.default())
         print_callback: Optional callback for print() output from the script.
-        Signature: (stream: str, text: str) -> None
+            Signature: (stream: str, text: str) -> None
 
     Returns:
         Result of code execution
     """
+    input_names = list(inputs.keys()) if inputs else []
+    monty = pydantic_monty.Monty(code, inputs=input_names)
 
-    input_names: list[str] = []
-    input_values: dict[str, Any] = {}
-    if inputs:
-        input_names = list(inputs.keys())
-        input_values = inputs
+    parsed_limits = (limits or Limits.default()).to_monty()
 
-    if input_names:
-        monty = pydantic_monty.Monty(code, inputs=input_names)
-    else:
-        monty = pydantic_monty.Monty(code)
-
-    if print_callback:
-        result = await pydantic_monty.run_monty_async(
-            monty, inputs=input_values or None, print_callback=print_callback
-        )
-    elif input_values:
-        result = await pydantic_monty.run_monty_async(monty, inputs=input_values)
-    else:
-        result = await pydantic_monty.run_monty_async(monty)
-    return result
+    return await pydantic_monty.run_monty_async(
+        monty,
+        inputs=inputs or None,
+        limits=parsed_limits or None,
+        print_callback=print_callback,
+    )
 
 
 def run_sync(
     code: str,
+    *,
     inputs: dict[str, Any] | None = None,
+    limits: Limits | None = None,
     print_callback: Callable[[str, str], None] | None = None,
 ) -> Any:
-    """
-    Synchronous wrapper for inline Monty code execution.
+    """Synchronous wrapper for inline Monty code execution.
 
     Args:
         code: Monty code to execute
         inputs: Input values
+        limits: Resource limits
         print_callback: Optional callback for print() output
 
     Returns:
@@ -688,7 +663,7 @@ def run_sync(
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(run(code, inputs, print_callback=print_callback))
+        return asyncio.run(run(code, inputs=inputs, limits=limits, print_callback=print_callback))
     else:
         raise RuntimeError(
             "run_sync() cannot be used inside an async context. Use 'await grail.run()' instead."

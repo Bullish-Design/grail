@@ -6,8 +6,8 @@ import ast
 from pathlib import Path
 from typing import Any
 
-from grail._types import ExternalSpec, InputSpec, ParamSpec, ParseResult
-from grail.errors import CheckError, ParseError
+from grail._types import ExternalSpec, InputSpec, ParameterSpec, ParseResult
+from grail.errors import ParseError
 
 
 def get_type_annotation_str(node: ast.expr | None, lenient: bool = False) -> str:
@@ -15,18 +15,18 @@ def get_type_annotation_str(node: ast.expr | None, lenient: bool = False) -> str
 
     Args:
         node: AST annotation node.
-        lenient: If True, return "<missing>" instead of raising CheckError.
+        lenient: If True, return "<missing>" instead of raising ParseError.
 
     Returns:
         String representation of type (e.g., "int", "dict[str, Any]").
 
     Raises:
-        CheckError: If annotation is missing or invalid (only when lenient=False).
+        ParseError: If annotation is missing or invalid (only when lenient=False).
     """
     if node is None:
         if lenient:
             return "<missing>"
-        raise CheckError("Missing type annotation")
+        raise ParseError("Missing type annotation")
 
     return ast.unparse(node)
 
@@ -40,7 +40,7 @@ def _get_annotation(node: ast.expr | None) -> str:
 
 def extract_function_params(
     func_node: ast.FunctionDef | ast.AsyncFunctionDef,
-) -> list[ParamSpec]:
+) -> list[ParameterSpec]:
     """Extract parameter specifications from function definition.
 
     Handles all parameter kinds: positional-only, positional-or-keyword,
@@ -54,7 +54,7 @@ def extract_function_params(
     """
     from grail._types import ParamKind
 
-    params: list[ParamSpec] = []
+    params: list[ParameterSpec] = []
     args = func_node.args
 
     # Defaults are right-aligned: if there are 3 args and 1 default,
@@ -74,7 +74,7 @@ def extract_function_params(
         if has_default:
             default_val = ast.dump(args.defaults[global_idx - first_default_idx])
         params.append(
-            ParamSpec(
+            ParameterSpec(
                 name=arg.arg,
                 type_annotation=_get_annotation(arg.annotation),
                 has_default=has_default,
@@ -94,7 +94,7 @@ def extract_function_params(
         if has_default:
             default_val = ast.dump(args.defaults[global_idx - first_default_idx])
         params.append(
-            ParamSpec(
+            ParameterSpec(
                 name=arg.arg,
                 type_annotation=_get_annotation(arg.annotation),
                 has_default=has_default,
@@ -106,7 +106,7 @@ def extract_function_params(
     # *args
     if args.vararg:
         params.append(
-            ParamSpec(
+            ParameterSpec(
                 name=args.vararg.arg,
                 type_annotation=_get_annotation(args.vararg.annotation),
                 has_default=False,
@@ -118,7 +118,7 @@ def extract_function_params(
     for i, arg in enumerate(args.kwonlyargs):
         kw_default = args.kw_defaults[i]  # None if no default
         params.append(
-            ParamSpec(
+            ParameterSpec(
                 name=arg.arg,
                 type_annotation=_get_annotation(arg.annotation),
                 has_default=kw_default is not None,
@@ -130,7 +130,7 @@ def extract_function_params(
     # **kwargs
     if args.kwarg:
         params.append(
-            ParamSpec(
+            ParameterSpec(
                 name=args.kwarg.arg,
                 type_annotation=_get_annotation(args.kwarg.annotation),
                 has_default=False,
@@ -153,7 +153,7 @@ def extract_externals(module: ast.Module) -> dict[str, ExternalSpec]:
         Dictionary mapping function names to ExternalSpec.
 
     Raises:
-        CheckError: If external declarations are malformed.
+        ParseError: If external declarations are malformed.
     """
     externals: dict[str, ExternalSpec] = {}
 
@@ -189,6 +189,51 @@ def extract_externals(module: ast.Module) -> dict[str, ExternalSpec]:
     return externals
 
 
+def _is_input_call(node: ast.expr | None) -> bool:
+    """Check if an expression is Input() or grail.Input()."""
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    if isinstance(func, ast.Name) and func.id == "Input":
+        return True
+    if isinstance(func, ast.Attribute) and func.attr == "Input":
+        return True
+    return False
+
+
+def _extract_input_from_call(
+    call_node: ast.Call, var_name: str, lineno: int, col_offset: int, type_annotation: str
+) -> InputSpec:
+    """Extract InputSpec from an Input() call node."""
+    input_name = None
+    if call_node.args:
+        if isinstance(call_node.args[0], ast.Constant):
+            input_name = call_node.args[0].value
+
+    if input_name is not None and input_name != var_name:
+        raise ParseError(
+            f"Input name '{input_name}' doesn't match variable name '{var_name}' "
+            f'at line {lineno}. Use Input("{var_name}") or omit the name argument.'
+        )
+
+    default = None
+    has_default = False
+    for kw in call_node.keywords:
+        if kw.arg == "default":
+            has_default = True
+            default = ast.literal_eval(kw.value) if isinstance(kw.value, ast.Constant) else None
+
+    return InputSpec(
+        name=var_name,
+        type_annotation=type_annotation,
+        default=default,
+        required=default is None,
+        lineno=lineno,
+        col_offset=col_offset,
+        input_name=input_name,
+    )
+
+
 def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
     """Extract input specifications from AST.
 
@@ -201,23 +246,13 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
         Dictionary mapping input names to InputSpec.
 
     Raises:
-        CheckError: If input declarations are malformed.
+        ParseError: If input declarations are malformed.
     """
     inputs: dict[str, InputSpec] = {}
 
     for node in module.body:
-        # Check annotated assignments (x: int = Input("x"))
         if isinstance(node, ast.AnnAssign):
-            if not isinstance(node.value, ast.Call):
-                continue
-
-            is_input_call = False
-            if isinstance(node.value.func, ast.Name) and node.value.func.id == "Input":
-                is_input_call = True
-            elif isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "Input":
-                is_input_call = True
-
-            if not is_input_call:
+            if not _is_input_call(node.value):
                 continue
 
             if node.annotation is None:
@@ -226,7 +261,7 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
                 annotation_str = get_type_annotation_str(node.annotation)
 
             if not isinstance(node.target, ast.Name):
-                raise CheckError(
+                raise ParseError(
                     "Input() must be assigned to a simple variable name",
                     lineno=node.lineno,
                 )
@@ -234,71 +269,35 @@ def extract_inputs(module: ast.Module) -> dict[str, InputSpec]:
             var_name = node.target.id
 
             if not node.value.args:
-                raise CheckError(
+                raise ParseError(
                     f"Input() call for '{var_name}' missing name argument",
                     lineno=node.lineno,
                 )
 
-            default = None
-            for keyword in node.value.keywords:
-                if keyword.arg == "default":
-                    try:
-                        default = ast.literal_eval(keyword.value)
-                    except (ValueError, TypeError):
-                        default = ast.unparse(keyword.value)
-                    break
-
-            inputs[var_name] = InputSpec(
-                name=var_name,
-                type_annotation=annotation_str,
-                default=default,
-                required=default is None,
-                lineno=node.lineno,
-                col_offset=node.col_offset,
+            inputs[var_name] = _extract_input_from_call(
+                node.value, var_name, node.lineno, node.col_offset, annotation_str
             )
 
-        # Check non-annotated assignments (x = Input("x"))
         elif isinstance(node, ast.Assign):
-            if not isinstance(node.value, ast.Call):
+            if not _is_input_call(node.value):
                 continue
 
-            is_input_call = False
-            if isinstance(node.value.func, ast.Name) and node.value.func.id == "Input":
-                is_input_call = True
-            elif isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "Input":
-                is_input_call = True
-
-            if is_input_call:
-                if not isinstance(node.targets[0], ast.Name):
-                    raise CheckError(
-                        "Input() must be assigned to a simple variable name",
-                        lineno=node.lineno,
-                    )
-
-                var_name = node.targets[0].id
-                default = None
-                for keyword in node.value.keywords:
-                    if keyword.arg == "default":
-                        try:
-                            default = ast.literal_eval(keyword.value)
-                        except (ValueError, TypeError):
-                            default = ast.unparse(keyword.value)
-                        break
-
-                inputs[var_name] = InputSpec(
-                    name=var_name,
-                    type_annotation="<missing>",
-                    default=default,
-                    required=default is None,
+            if not isinstance(node.targets[0], ast.Name):
+                raise ParseError(
+                    "Input() must be assigned to a simple variable name",
                     lineno=node.lineno,
-                    col_offset=node.col_offset,
                 )
+
+            var_name = node.targets[0].id
+            inputs[var_name] = _extract_input_from_call(
+                node.value, var_name, node.lineno, node.col_offset, "<missing>"
+            )
 
     return inputs
 
 
 def parse_pym_file(path: Path) -> ParseResult:
-    """Parse a .pym file and extract metadata.
+    """Parse a .pym file from disk.
 
     Args:
         path: Path to .pym file.
@@ -309,28 +308,12 @@ def parse_pym_file(path: Path) -> ParseResult:
     Raises:
         FileNotFoundError: If file doesn't exist.
         ParseError: If file has syntax errors.
-        CheckError: If declarations are malformed.
     """
+    path = Path(path)
     if not path.exists():
-        raise FileNotFoundError(f".pym file not found: {path}")
-
-    source = path.read_text()
-    source_lines = source.splitlines()
-
-    try:
-        module = ast.parse(source, filename=str(path))
-    except SyntaxError as exc:
-        raise ParseError(exc.msg, lineno=exc.lineno, col_offset=exc.offset) from exc
-
-    externals = extract_externals(module)
-    inputs = extract_inputs(module)
-
-    return ParseResult(
-        externals=externals,
-        inputs=inputs,
-        ast_module=module,
-        source_lines=source_lines,
-    )
+        raise FileNotFoundError(f"Script file not found: {path}")
+    source = path.read_text(encoding="utf-8")
+    return parse_pym_content(source, filename=str(path))
 
 
 def parse_pym_content(content: str, filename: str = "<string>") -> ParseResult:
@@ -344,8 +327,7 @@ def parse_pym_content(content: str, filename: str = "<string>") -> ParseResult:
         ParseResult.
 
     Raises:
-        ParseError: If content has syntax errors.
-        CheckError: If declarations are malformed.
+        ParseError: If content has syntax errors or declarations are malformed.
     """
     source_lines = content.splitlines()
 
@@ -362,4 +344,5 @@ def parse_pym_content(content: str, filename: str = "<string>") -> ParseResult:
         inputs=inputs,
         ast_module=module,
         source_lines=source_lines,
+        file=filename,
     )

@@ -110,8 +110,8 @@ class ExecutionError(GrailError):
         return "\n".join(output)
 
 
-class LimitError(ExecutionError):
-    """Raised when resource limits are exceeded."""
+class LimitError(GrailError):
+    """Raised when a resource limit is exceeded during script execution."""
 
     def __init__(self, message: str, limit_type: str | None = None) -> None:
         self.limit_type = limit_type
@@ -121,7 +121,7 @@ class LimitError(ExecutionError):
 class OutputError(GrailError):
     """Raised when output validation against output_model fails."""
 
-    def __init__(self, message: str, validation_errors: Any = None) -> None:
+    def __init__(self, message: str, validation_errors: Exception | None = None) -> None:
         self.message = message
         self.validation_errors = validation_errors
         super().__init__(message)

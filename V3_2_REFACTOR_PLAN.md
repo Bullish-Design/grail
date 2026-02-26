@@ -816,10 +816,8 @@ class LimitError(GrailError):
 ALLOWED_MODULES: set[str] = {
     "grail",
     "typing",
-    "__future__",  # from __future__ import annotations
     # Add others ONLY after verification:
-    # "math", "json", "re", "datetime", "dataclasses", "collections",
-    # "itertools", "functools", "os", "sys", "pathlib", "time", "random",
+    # "dataclasses", "os", "sys", "re", "datetime"
 }
 ```
 
@@ -833,7 +831,7 @@ def visit_Import(self, node: ast.Import) -> None:
             self._add_message(...)
 ```
 
-**Verify:** `from __future__ import annotations` does not trigger E005. `import grail` does not trigger E005.
+**Verify:** `import grail` does not trigger E005.
 
 ---
 

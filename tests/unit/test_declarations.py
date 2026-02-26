@@ -5,14 +5,14 @@ from grail._input import Input
 
 
 def test_external_decorator_is_noop() -> None:
-    """External decorator should not modify function behavior."""
+    """External decorator should not modify function behavior - it's a pure identity."""
 
     @external
     def dummy(x: int) -> int:
         return x + 1
 
-    assert hasattr(dummy, "__grail_external__")
-    assert dummy.__grail_external__ is True
+    # external is a pure identity function - no attributes are set
+    assert not hasattr(dummy, "__grail_external__")
     assert dummy(2) == 3
 
 

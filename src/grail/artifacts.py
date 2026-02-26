@@ -6,6 +6,8 @@ from typing import Any
 
 from grail._types import CheckResult, ExternalSpec, InputSpec
 
+ARTIFACTS_DIR_NAME = ".grail"
+
 
 class ArtifactsManager:
     """Manages .grail/ directory and generated artifacts."""

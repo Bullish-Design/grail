@@ -29,7 +29,15 @@ from grail.errors import (
 )
 
 # Check result types
-from grail._types import CheckResult, CheckMessage, ScriptEvent, ExternalSpec, InputSpec
+from grail._types import (
+    CheckResult,
+    CheckMessage,
+    ScriptEvent,
+    ExternalSpec,
+    InputSpec,
+    ParameterSpec,
+    ParamKind,
+)
 
 # Define public API
 __all__ = [
@@ -63,4 +71,6 @@ __all__ = [
     # Types
     "ExternalSpec",
     "InputSpec",
+    "ParameterSpec",
+    "ParamKind",
 ]

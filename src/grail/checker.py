@@ -408,7 +408,7 @@ def check_pym(parse_result: ParseResult) -> CheckResult:
     }
 
     return CheckResult(
-        file="<unknown>",
+        file=parse_result.file or "<unknown>",
         valid=len(all_errors) == 0,
         errors=all_errors,
         warnings=warnings,

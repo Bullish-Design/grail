@@ -19,7 +19,7 @@ class ParamKind(str, Enum):
 
 
 @dataclass
-class ParamSpec:
+class ParameterSpec:
     """Specification for a function parameter."""
 
     name: str
@@ -35,7 +35,7 @@ class ExternalSpec:
 
     name: str
     is_async: bool
-    parameters: list[ParamSpec]
+    parameters: list[ParameterSpec]
     return_type: str
     docstring: str | None
     lineno: int
@@ -52,6 +52,7 @@ class InputSpec:
     required: bool
     lineno: int
     col_offset: int
+    input_name: str | None = None
 
 
 @dataclass
@@ -62,6 +63,7 @@ class ParseResult:
     inputs: dict[str, InputSpec]
     ast_module: ast.Module
     source_lines: list[str]
+    file: str | None = None
 
 
 @dataclass

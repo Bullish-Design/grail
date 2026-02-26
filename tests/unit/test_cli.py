@@ -132,7 +132,7 @@ def test_check_nonexistent_file_shows_friendly_error(capsys):
     captured = capsys.readouterr()
 
     assert result == 1
-    assert "Error:" in captured.err
+    assert "File not found:" in captured.err
     assert "not found" in captured.err.lower()
     assert "Traceback" not in captured.err
     assert "Traceback" not in captured.out

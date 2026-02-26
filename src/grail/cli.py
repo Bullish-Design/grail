@@ -1,6 +1,7 @@
 """Command-line interface for grail."""
 
 import argparse
+import functools
 import sys
 import json
 import inspect
@@ -9,29 +10,52 @@ from typing import List
 
 import grail
 from grail.script import load
-from grail.artifacts import ArtifactsManager
-from grail.errors import GrailError, ParseError
+from grail.artifacts import ArtifactsManager, ARTIFACTS_DIR_NAME
+from grail.errors import GrailError, ParseError, CheckError
 
 
+def cli_error_handler(func):
+    """Wrap a CLI command with standard error handling."""
+
+    @functools.wraps(func)
+    def wrapper(args):
+        try:
+            return func(args)
+        except ParseError as e:
+            print(f"Parse error: {e}", file=sys.stderr)
+            return 1
+        except CheckError as e:
+            print(f"Check error: {e}", file=sys.stderr)
+            return 1
+        except GrailError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        except FileNotFoundError as e:
+            print(f"File not found: {e}", file=sys.stderr)
+            return 1
+
+    return wrapper
+
+
+@cli_error_handler
 def cmd_init(args):
     """Initialize grail project."""
-    try:
-        grail_dir = Path(".grail")
-        grail_dir.mkdir(exist_ok=True)
+    grail_dir = Path(ARTIFACTS_DIR_NAME)
+    grail_dir.mkdir(exist_ok=True)
 
-        # Add to .gitignore if it exists
-        gitignore = Path(".gitignore")
-        if gitignore.exists():
-            content = gitignore.read_text()
-            if ".grail/" not in content:
-                with gitignore.open("a") as f:
-                    f.write("\n# Grail artifacts\n.grail/\n")
-                print("✓ Added .grail/ to .gitignore")
+    # Add to .gitignore if it exists
+    gitignore = Path(".gitignore")
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if ".grail/" not in content:
+            with gitignore.open("a") as f:
+                f.write("\n# Grail artifacts\n.grail/\n")
+            print("✓ Added .grail/ to .gitignore")
 
-        # Create sample .pym file
-        sample_pym = Path("example.pym")
-        if not sample_pym.exists():
-            sample_pym.write_text("""from grail import external, Input
+    # Create sample .pym file
+    sample_pym = Path("example.pym")
+    if not sample_pym.exists():
+        sample_pym.write_text("""from grail import external, Input
 from typing import Any
 
 # Declare inputs
@@ -47,7 +71,7 @@ async def greet(name: str) -> str:
 message = await greet(name)
 {"greeting": message}
 """)
-            print("✓ Created example.pym")
+        print("✓ Created example.pym")
 
         print("\n✓ Grail initialized!")
         print("\nNext steps:")
@@ -55,207 +79,159 @@ message = await greet(name)
         print("  2. Run: grail check example.pym")
         print("  3. Create a host file and run: grail run example.pym --host host.py")
         return 0
-    except ParseError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except GrailError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except FileNotFoundError as e:
-        if getattr(args, "verbose", False):
-            raise
-        filename = e.filename or str(e)
-        print(f"Error: File not found: {filename}", file=sys.stderr)
-        return 1
 
 
+@cli_error_handler
 def cmd_check(args):
     """Check .pym files for Monty compatibility."""
-    try:
-        # Find files to check
-        if args.files:
-            files = [Path(f) for f in args.files]
-        else:
-            # Find all .pym files recursively
-            files = list(Path.cwd().rglob("*.pym"))
+    # Find files to check
+    if args.files:
+        files = [Path(f) for f in args.files]
+    else:
+        # Find all .pym files recursively
+        files = list(Path.cwd().rglob("*.pym"))
 
-        if not files:
-            print("No .pym files found")
-            return 1
+    if not files:
+        print("No .pym files found")
+        return 1
 
-        results = []
-        for file_path in files:
-            script = load(file_path, grail_dir=None)
-            result = script.check()
-            results.append((file_path, result))
+    results = []
+    for file_path in files:
+        script = load(file_path, grail_dir=None)
+        result = script.check()
+        results.append((file_path, result))
 
-        # Output results
-        if args.format == "json":
-            # JSON output for CI
-            output = []
-            for file_path, result in results:
-                output.append(
-                    {
-                        "file": str(file_path),
-                        "valid": result.valid,
-                        "errors": [
-                            {
-                                "line": e.lineno,
-                                "column": e.col_offset,
-                                "code": e.code,
-                                "message": e.message,
-                                "suggestion": e.suggestion,
-                            }
-                            for e in result.errors
-                        ],
-                        "warnings": [
-                            {
-                                "line": w.lineno,
-                                "column": w.col_offset,
-                                "code": w.code,
-                                "message": w.message,
-                            }
-                            for w in result.warnings
-                        ],
-                        "info": result.info,
-                    }
+    # Output results
+    if args.format == "json":
+        # JSON output for CI
+        output = []
+        for file_path, result in results:
+            output.append(
+                {
+                    "file": str(file_path),
+                    "valid": result.valid,
+                    "errors": [
+                        {
+                            "line": e.lineno,
+                            "column": e.col_offset,
+                            "code": e.code,
+                            "message": e.message,
+                            "suggestion": e.suggestion,
+                        }
+                        for e in result.errors
+                    ],
+                    "warnings": [
+                        {
+                            "line": w.lineno,
+                            "column": w.col_offset,
+                            "code": w.code,
+                            "message": w.message,
+                        }
+                        for w in result.warnings
+                    ],
+                    "info": result.info,
+                }
+            )
+        print(json.dumps(output, indent=2))
+    else:
+        # Human-readable output
+        passed = 0
+        failed = 0
+
+        for file_path, result in results:
+            if result.valid and (not args.strict or not result.warnings):
+                print(
+                    f"{file_path}: OK ({result.info['externals_count']} externals, "
+                    f"{result.info['inputs_count']} inputs, "
+                    f"{len(result.errors)} errors, {len(result.warnings)} warnings)"
                 )
-            print(json.dumps(output, indent=2))
-        else:
-            # Human-readable output
-            passed = 0
-            failed = 0
+                passed += 1
+            else:
+                print(f"{file_path}: FAIL")
+                failed += 1
 
-            for file_path, result in results:
-                if result.valid and (not args.strict or not result.warnings):
+                for error in result.errors:
                     print(
-                        f"{file_path}: OK ({result.info['externals_count']} externals, "
-                        f"{result.info['inputs_count']} inputs, "
-                        f"{len(result.errors)} errors, {len(result.warnings)} warnings)"
+                        f"  {file_path}:{error.lineno}:{error.col_offset}: "
+                        f"{error.code} {error.message}"
                     )
-                    passed += 1
-                else:
-                    print(f"{file_path}: FAIL")
-                    failed += 1
 
-                    for error in result.errors:
+                if args.strict:
+                    for warning in result.warnings:
                         print(
-                            f"  {file_path}:{error.lineno}:{error.col_offset}: "
-                            f"{error.code} {error.message}"
+                            f"  {file_path}:{warning.lineno}:{warning.col_offset}: "
+                            f"{warning.code} {warning.message}"
                         )
 
-                    if args.strict:
-                        for warning in result.warnings:
-                            print(
-                                f"  {file_path}:{warning.lineno}:{warning.col_offset}: "
-                                f"{warning.code} {warning.message}"
-                            )
+        print(f"\nChecked {len(files)} files: {passed} passed, {failed} failed")
 
-            print(f"\nChecked {len(files)} files: {passed} passed, {failed} failed")
+        if failed > 0:
+            return 1
 
-            if failed > 0:
-                return 1
-
-        return 0
-    except ParseError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except GrailError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except FileNotFoundError as e:
-        if getattr(args, "verbose", False):
-            raise
-        filename = e.filename or str(e)
-        print(f"Error: File not found: {filename}", file=sys.stderr)
-        return 1
+    return 0
 
 
+@cli_error_handler
 def cmd_run(args):
     """Run a .pym file with a host file."""
     import asyncio
     import importlib.util
 
-    try:
-        # Load and validate the .pym script
-        script_path = Path(args.file)
-        if not script_path.exists():
-            print(f"Error: {script_path} not found", file=sys.stderr)
+    # Load and validate the .pym script
+    script_path = Path(args.file)
+    if not script_path.exists():
+        print(f"Error: {script_path} not found", file=sys.stderr)
+        return 1
+
+    # Load the .pym script first (validates it)
+    script = grail.load(script_path, grail_dir=None)
+
+    # Parse inputs
+    inputs = {}
+    for item in args.input:
+        if "=" not in item:
+            print(
+                f"Error: Invalid input format '{item}'. Use key=value.",
+                file=sys.stderr,
+            )
+            return 1
+        key, value = item.split("=", 1)
+        inputs[key.strip()] = value.strip()
+
+    # Load host file if provided
+    if args.host:
+        host_path = Path(args.host)
+        if not host_path.exists():
+            print(f"Error: Host file {host_path} not found", file=sys.stderr)
             return 1
 
-        # Load the .pym script first (validates it)
-        script = grail.load(script_path, grail_dir=None)
+        # Import host module
+        spec = importlib.util.spec_from_file_location("host", host_path)
+        if spec is None:
+            print(f"Error: Cannot load host file {host_path}", file=sys.stderr)
+            return 1
+        loader = spec.loader
+        if loader is None:
+            print(f"Error: Cannot execute host file {host_path}", file=sys.stderr)
+            return 1
+        host_module = importlib.util.module_from_spec(spec)
+        loader.exec_module(host_module)
 
-        # Parse inputs
-        inputs = {}
-        for item in args.input:
-            if "=" not in item:
-                print(
-                    f"Error: Invalid input format '{item}'. Use key=value.",
-                    file=sys.stderr,
-                )
-                return 1
-            key, value = item.split("=", 1)
-            inputs[key.strip()] = value.strip()
-
-        # Load host file if provided
-        if args.host:
-            host_path = Path(args.host)
-            if not host_path.exists():
-                print(f"Error: Host file {host_path} not found", file=sys.stderr)
-                return 1
-
-            # Import host module
-            spec = importlib.util.spec_from_file_location("host", host_path)
-            if spec is None:
-                print(f"Error: Cannot load host file {host_path}", file=sys.stderr)
-                return 1
-            loader = spec.loader
-            if loader is None:
-                print(f"Error: Cannot execute host file {host_path}", file=sys.stderr)
-                return 1
-            host_module = importlib.util.module_from_spec(spec)
-            loader.exec_module(host_module)
-
-            # Run host's main() - always pass script and inputs as kwargs
-            if hasattr(host_module, "main"):
-                main_fn = host_module.main
-                if asyncio.iscoroutinefunction(main_fn):
-                    asyncio.run(main_fn(script=script, inputs=inputs))
-                else:
-                    main_fn(script=script, inputs=inputs)
+        # Run host's main() - always pass script and inputs as kwargs
+        if hasattr(host_module, "main"):
+            main_fn = host_module.main
+            if asyncio.iscoroutinefunction(main_fn):
+                asyncio.run(main_fn(script=script, inputs=inputs))
             else:
-                print("Error: Host file must define a main() function", file=sys.stderr)
-                return 1
+                main_fn(script=script, inputs=inputs)
         else:
-            print("Error: --host <host.py> is required", file=sys.stderr)
+            print("Error: Host file must define a main() function", file=sys.stderr)
             return 1
+    else:
+        print("Error: --host <host.py> is required", file=sys.stderr)
+        return 1
 
-        return 0
-    except ParseError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except GrailError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except FileNotFoundError as e:
-        if getattr(args, "verbose", False):
-            raise
-        filename = e.filename or str(e)
-        print(f"Error: File not found: {filename}", file=sys.stderr)
-        return 1
+    return 0
 
 
 def cmd_watch(args):
@@ -288,35 +264,19 @@ def cmd_watch(args):
             cmd_check(argparse.Namespace(files=None, format="text", strict=False))
 
 
+@cli_error_handler
 def cmd_clean(args):
     """Remove .grail/ directory."""
-    try:
-        grail_dir = Path(".grail")
+    grail_dir = Path(ARTIFACTS_DIR_NAME)
 
-        if grail_dir.exists():
-            mgr = ArtifactsManager(grail_dir)
-            mgr.clean()
-            print("✓ Removed .grail/")
-        else:
-            print(".grail/ does not exist")
+    if grail_dir.exists():
+        mgr = ArtifactsManager(grail_dir)
+        mgr.clean()
+        print("✓ Removed .grail/")
+    else:
+        print(".grail/ does not exist")
 
-        return 0
-    except ParseError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except GrailError as e:
-        if getattr(args, "verbose", False):
-            raise
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
-    except FileNotFoundError as e:
-        if getattr(args, "verbose", False):
-            raise
-        filename = e.filename or str(e)
-        print(f"Error: File not found: {filename}", file=sys.stderr)
-        return 1
+    return 0
 
 
 def main():
