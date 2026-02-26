@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import ast
+import logging
 
 from grail._types import CheckMessage, CheckResult, ParseResult
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_MODULES: set[str] = {
     "grail",
@@ -432,6 +435,9 @@ def check_pym(parse_result: ParseResult) -> CheckResult:
     Returns:
         CheckResult with errors, warnings, and info.
     """
+    filename = parse_result.file or "<unknown>"
+    logger.debug("Checking script: %s", filename)
+
     checker = MontyCompatibilityChecker(parse_result.source_lines)
     checker.visit(parse_result.ast_module)
 

@@ -106,10 +106,16 @@ def cmd_check(args):
         # JSON output for CI
         output = []
         for file_path, result in results:
+            # Compute valid based on strict flag
+            if args.strict:
+                valid = len(result.errors) == 0 and len(result.warnings) == 0
+            else:
+                valid = len(result.errors) == 0
+
             output.append(
                 {
                     "file": str(file_path),
-                    "valid": result.valid,
+                    "valid": valid,
                     "errors": [
                         {
                             "line": e.lineno,
@@ -234,6 +240,7 @@ def cmd_run(args):
     return 0
 
 
+@cli_error_handler
 def cmd_watch(args):
     """Watch .pym files and re-run check on changes."""
     try:
@@ -246,22 +253,37 @@ def cmd_watch(args):
         )
         return 1
 
+    import time
+
     watch_dir = Path(args.dir) if args.dir else Path.cwd()
 
     print(f"Watching {watch_dir} for .pym file changes...")
     print("Press Ctrl+C to stop")
 
+    # Build namespace for inner cmd_check calls, propagating --strict and --verbose
+    check_args = argparse.Namespace(
+        files=None,
+        format="text",
+        strict=args.strict,
+    )
+
     # Initial check
     print("\n=== Initial check ===")
-    cmd_check(argparse.Namespace(files=None, format="text", strict=False))
+    cmd_check(check_args)
 
     # Watch for changes
-    for changes in watchfiles.watch(watch_dir, recursive=True):
-        # Filter for .pym files
-        pym_changes = [c for c in changes if c[1].endswith(".pym")]
-        if pym_changes:
-            print(f"\n=== Changes detected ===")
-            cmd_check(argparse.Namespace(files=None, format="text", strict=False))
+    try:
+        for changes in watchfiles.watch(watch_dir, recursive=True):
+            # Filter for .pym files
+            pym_changes = [c for c in changes if c[1].endswith(".pym")]
+            if pym_changes:
+                print(f"\n=== Changes detected ===")
+                cmd_check(check_args)
+    except KeyboardInterrupt:
+        print("\nWatch terminated.")
+        return 0
+
+    return 0
 
 
 @cli_error_handler
@@ -281,6 +303,8 @@ def cmd_clean(args):
 
 def main():
     """Main CLI entry point."""
+    from grail import __version__
+
     parser = argparse.ArgumentParser(
         description="Grail - Transparent Python for Monty", prog="grail"
     )
@@ -289,6 +313,11 @@ def main():
         "-v",
         action="store_true",
         help="Show full error tracebacks",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -322,6 +351,7 @@ def main():
     # grail watch
     parser_watch = subparsers.add_parser("watch", help="Watch and check .pym files")
     parser_watch.add_argument("dir", nargs="?", help="Directory to watch")
+    parser_watch.add_argument("--strict", action="store_true", help="Treat warnings as errors")
     parser_watch.set_defaults(func=cmd_watch)
 
     # grail clean

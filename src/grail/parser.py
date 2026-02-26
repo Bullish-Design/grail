@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from typing import Any
 
 from grail._types import ExternalSpec, InputSpec, ParameterSpec, ParseResult
 from grail.errors import ParseError
+
+logger = logging.getLogger(__name__)
 
 
 def get_type_annotation_str(node: ast.expr | None, lenient: bool = False) -> str:
@@ -329,6 +332,7 @@ def parse_pym_content(content: str, filename: str = "<string>") -> ParseResult:
     Raises:
         ParseError: If content has syntax errors or declarations are malformed.
     """
+    logger.debug("Parsing pym content: %s", filename)
     source_lines = content.splitlines()
 
     try:

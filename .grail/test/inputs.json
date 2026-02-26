@@ -1,8 +1,8 @@
 {
   "inputs": [
     {
-      "name": "x",
-      "type": "int",
+      "name": "person",
+      "type": "Person",
       "required": true,
       "default": null
     }

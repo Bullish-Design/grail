@@ -146,5 +146,7 @@ class ArtifactsManager:
         """Remove the entire .grail/ directory."""
         import shutil
 
+        if self.grail_dir.name != ARTIFACTS_DIR_NAME:
+            raise ValueError(f"Refusing to delete directory: {self.grail_dir}")
         if self.grail_dir.exists():
             shutil.rmtree(self.grail_dir)

@@ -1,0 +1,17 @@
+{
+  "externals": [
+    {
+      "name": "fetch",
+      "async": true,
+      "parameters": [
+        {
+          "name": "url",
+          "type": "str",
+          "default": null
+        }
+      ],
+      "return_type": "str",
+      "docstring": null
+    }
+  ]
+}

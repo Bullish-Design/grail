@@ -1,0 +1,12 @@
+{
+  "file": "/run/user/1000/pytest-of-andrew/pytest-52/test_on_event_captures_run_err0/bad.pym",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "info": {
+    "externals_count": 0,
+    "inputs_count": 0,
+    "lines_of_code": 1,
+    "monty_features_used": []
+  }
+}

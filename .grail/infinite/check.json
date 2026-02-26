@@ -1,0 +1,12 @@
+{
+  "file": "/run/user/1000/pytest-of-andrew/pytest-52/test_except_execution_error_do0/infinite.pym",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "info": {
+    "externals_count": 0,
+    "inputs_count": 0,
+    "lines_of_code": 2,
+    "monty_features_used": []
+  }
+}

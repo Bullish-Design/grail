@@ -2,8 +2,11 @@
 
 import ast
 import copy
+import logging
 from grail._types import ParseResult, SourceMap
 from grail.errors import GrailError
+
+logger = logging.getLogger(__name__)
 
 
 class GrailDeclarationStripper(ast.NodeTransformer):
@@ -116,12 +119,17 @@ def generate_monty_code(parse_result: ParseResult) -> tuple[str, SourceMap]:
     """
     Generate Monty-compatible code from parsed .pym file.
 
+    NOTE: Generated Monty code loses all comments, blank lines, and original
+    formatting. This is inherent to ast.unparse(). The source map preserves
+    line number mapping for error reporting.
+
     Args:
         parse_result: Result from parse_pym_file()
 
     Returns:
         Tuple of (monty_code, source_map)
     """
+    logger.debug("Generating Monty code")
     # Get sets of names to remove
     external_names = set(parse_result.externals.keys())
     input_names = set(parse_result.inputs.keys())

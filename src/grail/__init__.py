@@ -4,6 +4,10 @@ Grail - Transparent Python for Monty.
 A minimalist library for writing Monty code with full IDE support.
 """
 
+import logging
+
+logging.getLogger("grail").addHandler(logging.NullHandler())
+
 __version__ = "3.0.0"
 
 # Core functions

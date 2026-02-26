@@ -1,0 +1,12 @@
+{
+  "file": "/run/user/1000/pytest-of-andrew/pytest-52/test_load_succeeds_for_valid_s0/good.pym",
+  "valid": true,
+  "errors": [],
+  "warnings": [],
+  "info": {
+    "externals_count": 1,
+    "inputs_count": 0,
+    "lines_of_code": 7,
+    "monty_features_used": []
+  }
+}

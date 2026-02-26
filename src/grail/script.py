@@ -2,11 +2,14 @@
 
 import asyncio
 import functools
+import logging
 import warnings
 from pathlib import Path
 from typing import Any, Callable, Literal, NoReturn
 import time
 import re
+
+logger = logging.getLogger(__name__)
 
 import pydantic_monty
 
@@ -109,6 +112,8 @@ class GrailScript:
         Returns:
             CheckResult with errors, warnings, and info
         """
+        logger.debug("Checking script %s", self.name)
+
         if on_event is not None:
             on_event(
                 ScriptEvent(
@@ -154,9 +159,19 @@ class GrailScript:
 
         # Write check results to artifacts if enabled
         if self._artifacts:
-            self._artifacts.write_script_artifacts(
-                self.name, self.stubs, self.monty_code, check_result, self.externals, self.inputs
-            )
+            try:
+                self._artifacts.write_script_artifacts(
+                    self.name,
+                    self.stubs,
+                    self.monty_code,
+                    check_result,
+                    self.externals,
+                    self.inputs,
+                )
+            except OSError as e:
+                import logging
+
+                logging.getLogger(__name__).warning("Failed to write artifacts: %s", e)
 
         if on_event is not None:
             on_event(
@@ -288,6 +303,8 @@ class GrailScript:
         """Map a runtime error, fire events, write logs, and re-raise."""
         duration_ms = (time.time() - start_time) * 1000
         mapped_error = self._map_error_to_pym(error)
+
+        logger.warning("Script execution failed: %s", mapped_error)
 
         # Fire event
         on_event = getattr(self, "_current_on_event", None)
@@ -438,6 +455,7 @@ class GrailScript:
 
         inputs = inputs or {}
         externals = externals or {}
+        monty_inputs = inputs if self.inputs else None
 
         captured_output: list[str] = []
 
@@ -465,6 +483,10 @@ class GrailScript:
                     external_count=len(externals),
                 )
             )
+
+        logger.debug(
+            "Running script %s with %d inputs, %d externals", self.name, len(inputs), len(externals)
+        )
 
         # Validate inputs and externals
         self._validate_inputs(inputs, strict=strict_validation)
@@ -500,7 +522,7 @@ class GrailScript:
         try:
             result = await pydantic_monty.run_monty_async(
                 monty,
-                inputs=inputs,
+                inputs=monty_inputs,
                 external_functions=externals,
                 os=os_access,
                 limits=parsed_limits,
@@ -608,6 +630,8 @@ def load(
 
     path = Path(path)
 
+    logger.debug("Loading script from %s", path)
+
     # Parse the file
     parse_result = parse_pym_file(path)
 
@@ -632,10 +656,20 @@ def load(
 
     # Write artifacts
     if grail_dir_path:
-        artifacts = ArtifactsManager(grail_dir_path)
-        artifacts.write_script_artifacts(
-            path.stem, stubs, monty_code, check_result, parse_result.externals, parse_result.inputs
-        )
+        try:
+            artifacts = ArtifactsManager(grail_dir_path)
+            artifacts.write_script_artifacts(
+                path.stem,
+                stubs,
+                monty_code,
+                check_result,
+                parse_result.externals,
+                parse_result.inputs,
+            )
+        except OSError as e:
+            import logging
+
+            logging.getLogger(__name__).warning("Failed to write artifacts: %s", e)
 
     script = GrailScript(
         path=path,

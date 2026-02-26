@@ -1,5 +1,7 @@
 """Test error hierarchy."""
 
+import pytest
+
 from grail.errors import (
     CheckError,
     ExecutionError,
@@ -19,8 +21,20 @@ def test_error_hierarchy() -> None:
     assert issubclass(InputError, GrailError)
     assert issubclass(ExternalError, GrailError)
     assert issubclass(ExecutionError, GrailError)
-    assert issubclass(LimitError, ExecutionError)
+    assert issubclass(LimitError, GrailError)
     assert issubclass(OutputError, GrailError)
+
+
+def test_limit_error_is_grail_error() -> None:
+    """LimitError should be a subclass of GrailError."""
+    err = LimitError("test", limit_type="memory")
+    assert isinstance(err, GrailError)
+
+
+def test_limit_error_is_not_execution_error() -> None:
+    """LimitError should NOT be a subclass of ExecutionError."""
+    err = LimitError("test", limit_type="memory")
+    assert not isinstance(err, ExecutionError)
 
 
 def test_parse_error_formatting() -> None:
@@ -53,13 +67,6 @@ def test_execution_error_without_context() -> None:
     assert "Line 5" in formatted
     assert "Something failed" in formatted
     assert "> " not in formatted
-
-
-def test_limit_error_is_execution_error() -> None:
-    """LimitError should be a subclass of ExecutionError."""
-    err = LimitError("Memory limit exceeded", limit_type="memory")
-    assert isinstance(err, ExecutionError)
-    assert err.limit_type == "memory"
 
 
 def test_limit_error_has_limit_type() -> None:

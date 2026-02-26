@@ -1,12 +1,14 @@
 {
-  "file": "/run/user/1000/tmp4e5mhzhh/test.pym",
+  "file": "/run/user/1000/pytest-of-andrew/pytest-52/test_dataclass_roundtrip0/test.pym",
   "valid": true,
   "errors": [],
   "warnings": [],
   "info": {
     "externals_count": 0,
     "inputs_count": 1,
-    "lines_of_code": 2,
-    "monty_features_used": []
+    "lines_of_code": 5,
+    "monty_features_used": [
+      "f_string"
+    ]
   }
 }
