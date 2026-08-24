@@ -32,6 +32,30 @@
     echo hello from $GREET
   '';
 
+  # devman — the automation plane (CONCEPT.md §5). `base` alone: this repository
+  # ships no scheduled work and writes none of its own files.
+  devman = {
+    enable = true;
+    project = "grail";
+    groups = [ "base" ];
+  };
+
+  # https://devenv.sh/tasks/
+  #
+  # The two task names the `base` group calls (groups/base/README.md). devenv
+  # owns each implementation; Dagu owns the composition (§6). `uv run` rather
+  # than bare names: the venv bin is on the interactive shell's PATH but not on
+  # the task runner's PATH (STAGE_7_LOG.md, wave 2b). `ruff check src tests`
+  # matches the repo's own scope; the tree carries 83 findings there today
+  # (recorded, not repaired — adoption and repair are separate passes).
+  tasks = {
+    "grail:lint".exec = "uv run ruff check src tests";
+    "grail:test".exec = "uv run pytest";
+
+    "base:check".after = [ "grail:lint" ];
+    "base:test".after = [ "grail:test" ];
+  };
+
   enterShell = ''
     hello
     git --version
